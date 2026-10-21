@@ -134,14 +134,23 @@
     $("#dlg-event").showModal();
   }
 
+  // Löscht ohne Rückfrage; die Meldung bietet «Rückgängig» an (legt das Event neu an).
   async function deleteEvent(ev) {
-    const t = typeOf(ev);
-    const label = `${t?.name || "Event"} ${D.formatDate(ev.date)}, ${clock(ev.start_min)}–${clock(ev.end_min)} (${proName(ev.pro_id)})`;
-    if (!confirm(`Event löschen?\n${label}`)) return false;
     await ctx.api(`/events/${ev.id}`, { method: "DELETE" });
-    ctx.toast("Event gelöscht");
+    ctx.toast(`${typeOf(ev)?.name || "Event"} ${clock(ev.start_min)}–${clock(ev.end_min)} gelöscht`, {
+      label: "Rückgängig",
+      run: async () => {
+        try {
+          const { type_id, pro_id, date, start_min, end_min, notiz } = ev;
+          await ctx.api("/events", { method: "POST", body: { type_id, pro_id, date, start_min, end_min, notiz } });
+          ctx.toast("Event wiederhergestellt");
+          ctx.reload();
+        } catch (err) {
+          ctx.toast(err.message);
+        }
+      },
+    });
     ctx.reload();
-    return true;
   }
 
   // Rechtsklick-Menü für ein bestehendes Event
@@ -285,7 +294,8 @@
     $("#event-delete").addEventListener("click", async () => {
       if (!editingEvent) return;
       try {
-        if (await deleteEvent(editingEvent)) $("#dlg-event").close();
+        await deleteEvent(editingEvent);
+        $("#dlg-event").close();
       } catch (err) {
         ef.querySelector(".form-error").textContent = err.message;
       }
@@ -308,7 +318,7 @@
       }
     });
     $("#type-delete").addEventListener("click", async () => {
-      if (!editingType || !confirm(`Event-Typ «${editingType.name}» wirklich löschen?`)) return;
+      if (!editingType) return;
       try {
         await ctx.api(`/event-types/${editingType.id}`, { method: "DELETE" });
         $("#dlg-type").close();

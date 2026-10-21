@@ -444,6 +444,8 @@ fieldset > .btn { align-self: flex-start; }
   padding: 10px 16px; border-radius: 9px; font-weight: 600; z-index: 80; transition: transform .25s;
 }
 .toast.on { transform: translateX(-50%); }
+.toast { display: flex; align-items: center; gap: 14px; }
+.toast button { border: 0; background: none; padding: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
 
 @media (max-width: 1100px) {
   .cal-layout, .users-layout { grid-template-columns: 1fr; }

@@ -50,12 +50,23 @@
   }
 
   let toastTimer;
-  function toast(message) {
+  // Kurze Meldung unten; optional mit Aktion, z. B. { label: "Rückgängig", run }
+  function toast(message, action) {
     const el = $("#toast");
-    el.textContent = message;
+    el.replaceChildren(document.createTextNode(message));
+    if (action) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = action.label;
+      btn.addEventListener("click", () => {
+        el.classList.remove("on");
+        action.run();
+      });
+      el.appendChild(btn);
+    }
     el.classList.add("on");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove("on"), 2400);
+    toastTimer = setTimeout(() => el.classList.remove("on"), action ? 6000 : 2400);
   }
 
   function initials(name) {
@@ -169,10 +180,6 @@
       adminLabel.append(adminBox, document.createTextNode("Admin"));
       adminBox.addEventListener("change", async () => {
         const self = user.id === session?.id;
-        if (self && !adminBox.checked && !confirm("Damit entziehst du dir selbst die Admin-Rechte. Fortfahren?")) {
-          adminBox.checked = true;
-          return;
-        }
         try {
           await api(`/users/${user.id}`, { method: "PATCH", body: { is_admin: adminBox.checked } });
           toast(`${user.name}: Admin-Rechte ${adminBox.checked ? "erteilt" : "entzogen"}`);
@@ -193,7 +200,6 @@
       del.className = "btn sm danger";
       del.textContent = "Löschen";
       del.addEventListener("click", async () => {
-        if (!confirm(`Benutzer «${user.username}» wirklich löschen?`)) return;
         try {
           await api(`/users/${user.id}`, { method: "DELETE" });
           toast(`Benutzer «${user.username}» gelöscht`);
