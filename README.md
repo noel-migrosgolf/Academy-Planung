@@ -4,9 +4,9 @@ Planungstool für die AI Academy Golf im Golfpark Holzhäusern.
 
 ## Aufbau
 
-- `server/` – Node.js/Express-Server mit API (Login, Benutzerverwaltung)
+- `server/` – Node.js/Express-Server mit API (Login, Benutzer, Pros)
 - `public/` – Oberfläche (HTML/CSS/JS), Logo und Favicons unter `public/img/`
-- PostgreSQL-Datenbank; das Schema wird beim Start automatisch angelegt.
+- PostgreSQL-Datenbank mit den Tabellen `users`, `sessions` und `pros`; das Schema wird beim Start automatisch angelegt bzw. ergänzt.
 
 ## Lokal starten
 
@@ -38,6 +38,6 @@ Build Command `npm ci` und Start Command `npm start`.
 
 - **Login** wie im Event Manager: Benutzer wählen, Passwort eingeben, Ladeanimation und Begrüssung (Passwörter als scrypt-Hash in der Datenbank). Der Admin-Zugang liegt oben rechts.
 - **Kalender** (`public/js/planner.js`): Einsatzkalender der Pros mit den Ansichten Tag, Woche, Monat und Saison, Navigation per Datum und KW sowie Filter nach Pros. Noch ohne Einsätze.
-- **Pros**: Übersicht aller Pros; Admins können Pros hinzufügen und entfernen.
+- **Pros**: Übersicht mit Einstellungen je Pro (Kürzel, Lektionen/Jahr, Einsatzbereiche Kurse/Bambini/GCE, freie Tage, Soll-Auslastung, Abwesenheiten, Verfügbarkeitsregel). Admins können Pros anlegen, bearbeiten und löschen. Startwerte in `server/pros.js`.
 - **Schulferien** (`public/js/calendar.js`): Jahresübersicht 2027 mit den Schulferien und schulfreien Tagen des Kantons Zug (`public/js/ferien.js`).
 - **Benutzer** (nur Admin): Benutzer anlegen und löschen.

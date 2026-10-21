@@ -158,15 +158,16 @@
 
       <!-- Pros -->
       <section id="page-pros" class="page" hidden>
-        <h1>Pros</h1>
-        <p class="lead">Alle Pros der Academy. Klick auf eine Karte zeigt den Kalender nur für diesen Pro.</p>
-        <form id="pro-form" class="card pro-add" data-admin hidden>
-          <div class="bd">
-            <input name="name" type="text" placeholder="Name des neuen Pros" aria-label="Name" required>
-            <button class="btn primary" type="submit">Pro hinzufügen</button>
+        <div class="page-head">
+          <div>
+            <h1>Pros</h1>
+            <p class="lead">Einstellungen und Einsatzbereiche aller Pros. Klick auf eine Karte zeigt den Kalender nur für diesen Pro.</p>
           </div>
-          <p class="form-error" role="alert"></p>
-        </form>
+          <button id="btn-new-pro" class="btn primary" data-admin hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            Neuer Pro
+          </button>
+        </div>
         <div id="pro-list" class="pros"></div>
       </section>
 
@@ -241,12 +242,71 @@
     </form>
   </dialog>
 
+  <!-- Pro bearbeiten (Admin) -->
+  <dialog id="dlg-pro" class="dialog dialog-wide">
+    <form id="pro-edit-form" class="card" novalidate>
+      <div class="hd"><h3 id="pro-edit-title">Pro bearbeiten</h3></div>
+      <div class="bd form">
+        <div class="grid2">
+          <label>Name
+            <input name="name" type="text" required>
+          </label>
+          <label>Kürzel
+            <input name="code" type="text" maxlength="10" placeholder="z. B. PYN" required>
+          </label>
+          <label>Lektionen pro Jahr
+            <input name="lektionen_jahr" type="number" min="0" max="5000" step="1" required>
+          </label>
+          <label>Soll-Auslastung in %
+            <input name="auslastung_soll_prozent" type="number" min="0" max="200" step="1" required>
+          </label>
+        </div>
+
+        <fieldset>
+          <legend>Einsatzbereiche</legend>
+          <div class="checks">
+            <label class="check"><input type="checkbox" name="kurse"> Kurse</label>
+            <label class="check"><input type="checkbox" name="bambinitraining"> Bambinitraining</label>
+            <label class="check"><input type="checkbox" name="gce_training"> GCE-Training</label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Freie Tage</legend>
+          <div class="checks days" id="pro-days"></div>
+        </fieldset>
+
+        <label>Verfügbarkeitsregel
+          <select name="verfuegbarkeitsregel" class="fsel">
+            <option value="">Keine</option>
+            <option value="wochenend_wechsel_AB">Wochenend-Wechsel A/B</option>
+          </select>
+        </label>
+
+        <fieldset>
+          <legend>Abwesenheiten</legend>
+          <div id="pro-absences" class="absences"></div>
+          <button type="button" class="btn sm" id="pro-absence-add">+ Abwesenheit</button>
+        </fieldset>
+
+        <p class="form-error" role="alert"></p>
+        <div class="actions">
+          <button class="btn danger" type="button" id="pro-delete">Pro löschen</button>
+          <span class="spacer"></span>
+          <button class="btn" type="button" data-close>Abbrechen</button>
+          <button class="btn primary" type="submit">Speichern</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status"></div>
 
   <script src="js/ferien.js"></script>
   <script src="js/dates.js"></script>
   <script src="js/calendar.js"></script>
   <script src="js/planner.js"></script>
+  <script src="js/pros.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

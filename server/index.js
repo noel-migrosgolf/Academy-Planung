@@ -2,6 +2,7 @@ const path = require("path");
 const express = require("express");
 const { pool, migrate } = require("./db");
 const auth = require("./auth");
+const prosData = require("./pros");
 
 const app = express();
 app.set("trust proxy", 1); // Render sitzt vor der App
@@ -93,25 +94,52 @@ api.delete("/users/:id", auth.requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+const PRO_FIELDS = `id, ${prosData.COLUMNS.join(", ")}`;
+
 api.get("/pros", auth.requireLogin, async (req, res) => {
-  const { rows } = await pool.query("SELECT id, name FROM pros ORDER BY sort_order, id");
+  const { rows } = await pool.query(`SELECT ${PRO_FIELDS} FROM pros ORDER BY sort_order, id`);
   res.json({ pros: rows });
 });
 
-api.post("/pros", auth.requireAdmin, async (req, res) => {
-  const name = String(req.body.name || "").trim();
-  if (!name) return res.status(400).json({ error: "Bitte einen Namen eingeben." });
-  const { rows } = await pool.query(
-    `INSERT INTO pros (name, sort_order)
-     VALUES ($1, (SELECT coalesce(max(sort_order), 0) + 1 FROM pros))
-     RETURNING id, name`,
-    [name]
-  );
-  res.status(201).json({ pro: rows[0] });
-});
+// Gemeinsame Fehlerbehandlung für Anlegen und Bearbeiten.
+async function savePro(res, run) {
+  try {
+    const { rows } = await run();
+    if (!rows[0]) return res.status(404).json({ error: "Pro nicht gefunden." });
+    res.json({ pro: rows[0] });
+  } catch (err) {
+    if (err instanceof prosData.ValidationError) return res.status(400).json({ error: err.message });
+    if (err.code === "23505") return res.status(409).json({ error: "Dieses Kürzel ist bereits vergeben." });
+    throw err;
+  }
+}
+
+api.post("/pros", auth.requireAdmin, (req, res) =>
+  savePro(res, () => {
+    const pro = prosData.normalize(req.body);
+    const params = prosData.COLUMNS.map((_, i) => `$${i + 1}`).join(", ");
+    return pool.query(
+      `INSERT INTO pros (${prosData.COLUMNS.join(", ")}, sort_order)
+       VALUES (${params}, (SELECT coalesce(max(sort_order), 0) + 1 FROM pros))
+       RETURNING ${PRO_FIELDS}`,
+      prosData.values(pro)
+    );
+  })
+);
+
+api.put("/pros/:id", auth.requireAdmin, (req, res) =>
+  savePro(res, () => {
+    const pro = prosData.normalize(req.body);
+    const sets = prosData.COLUMNS.map((c, i) => `${c} = $${i + 1}`).join(", ");
+    return pool.query(
+      `UPDATE pros SET ${sets} WHERE id = $${prosData.COLUMNS.length + 1} RETURNING ${PRO_FIELDS}`,
+      [...prosData.values(pro), Number.parseInt(req.params.id, 10) || 0]
+    );
+  })
+);
 
 api.delete("/pros/:id", auth.requireAdmin, async (req, res) => {
-  await pool.query("DELETE FROM pros WHERE id = $1", [Number(req.params.id)]);
+  await pool.query("DELETE FROM pros WHERE id = $1", [Number.parseInt(req.params.id, 10) || 0]);
   res.json({ ok: true });
 });
 

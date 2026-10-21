@@ -1,4 +1,5 @@
 const { Pool } = require("pg");
+const pros = require("./pros");
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL ist nicht gesetzt.");
@@ -38,6 +39,18 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
+  await pool.query(`
+    ALTER TABLE pros
+      ADD COLUMN IF NOT EXISTS code                    TEXT UNIQUE,
+      ADD COLUMN IF NOT EXISTS lektionen_jahr          INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS bambinitraining         BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS kurse                   BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS gce_training            BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS freie_tage              TEXT[] NOT NULL DEFAULT '{}',
+      ADD COLUMN IF NOT EXISTS auslastung_soll_prozent INTEGER NOT NULL DEFAULT 100,
+      ADD COLUMN IF NOT EXISTS abwesenheiten           JSONB NOT NULL DEFAULT '[]',
+      ADD COLUMN IF NOT EXISTS verfuegbarkeitsregel    TEXT;
+  `);
   await pool.query("DELETE FROM sessions WHERE expires_at < now()");
 
   // Start-Pros nur beim erstmaligen Anlegen der Tabelle einfügen.
@@ -46,6 +59,20 @@ async function migrate() {
     for (const [i, name] of names.entries()) {
       await pool.query("INSERT INTO pros (name, sort_order) VALUES ($1, $2)", [name, i + 1]);
     }
+  }
+
+  // Startwerte einmalig übernehmen: nur für Pros, die noch kein Kürzel haben.
+  // Spätere Änderungen durch Admins bleiben dadurch erhalten.
+  for (const seed of pros.SEED) {
+    const cols = pros.COLUMNS.filter((c) => c !== "name");
+    const sets = cols.map((c, i) => `${c} = $${i + 1}`).join(", ");
+    const vals = pros.values(seed).filter((_, i) => pros.COLUMNS[i] !== "name");
+    await pool.query(
+      `UPDATE pros SET ${sets}
+        WHERE name = $${cols.length + 1} AND code IS NULL
+          AND NOT EXISTS (SELECT 1 FROM pros WHERE code = $1)`,
+      [...vals, seed.name]
+    );
   }
 }
 
