@@ -56,6 +56,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>
         Geplante Events
       </button>
+      <button data-page="auslasten">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/><path d="M4 18h16"/></svg>
+        Auslasten
+      </button>
       <button data-page="pros">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7.5" r="3.5"/><path d="M5 20c.9-3.6 3.7-6 7-6s6.1 2.4 7 6"/></svg>
         Pros
@@ -277,6 +281,41 @@
             <thead><tr><th>Nr.</th><th>Zeit</th><th>Wer</th><th>Änderung</th><th>Umfang</th><th></th></tr></thead>
             <tbody id="version-list"></tbody>
           </table>
+        </div>
+      </section>
+
+      <!-- Auslasten: Ziel je Pro, Kurse automatisch verteilen -->
+      <section id="page-auslasten" class="page" hidden>
+        <h1>Auslasten</h1>
+        <p class="lead">Ziel-Auslastung je Pro einstellen und die gewählten Kurse automatisch über 2027 verteilen. Bestehende Events zählen mit; es wird nur ergänzt, nie gelöscht. Jeder Pro bekommt nur Kurse seines Einsatzbereichs und nie zwei Termine gleichzeitig.</p>
+        <div class="card stack">
+          <div class="hd"><h3>Kurse</h3><span class="sub">Diese Event-Typen werden verteilt (nur Typen mit fester Zeit)</span></div>
+          <div class="bd af-opts">
+            <div class="chips" id="af-types"></div>
+            <div class="af-row">
+              <label class="check sm"><input type="checkbox" id="af-free" checked> Freie Tage der Pros beachten</label>
+              <label class="af-date">Von <input type="date" id="af-from" value="2027-01-01" min="2027-01-01" max="2027-12-31"></label>
+              <label class="af-date">Bis <input type="date" id="af-to" value="2027-12-31" min="2027-01-01" max="2027-12-31"></label>
+            </div>
+          </div>
+        </div>
+        <div class="card stack">
+          <div class="hd">
+            <h3>Pros</h3><span class="sub">Ziel = geplante Brutto-Stunden in % der Sollstunden</span>
+            <span class="spacer"></span>
+            <label class="af-all">Alle <input type="range" id="af-all" min="0" max="150" step="5" value="65"> <b id="af-all-val">65 %</b></label>
+          </div>
+          <div class="af-scroll">
+            <table class="t af-table">
+              <thead><tr><th>Pro</th><th>Bereich</th><th>Aktuell</th><th>Ziel</th><th>Ergebnis</th></tr></thead>
+              <tbody id="af-list"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="actions">
+          <span class="note" id="af-note"></span>
+          <button class="btn" type="button" id="af-preview">Vorschau</button>
+          <button class="btn primary" type="button" id="af-run">Ausführen</button>
         </div>
       </section>
 
@@ -594,6 +633,7 @@
   <script src="js/pros.js"></script>
   <script src="js/history.js"></script>
   <script src="js/ai.js"></script>
+  <script src="js/autofill.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

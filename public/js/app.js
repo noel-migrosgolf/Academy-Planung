@@ -17,6 +17,7 @@
     users: $("#page-users"),
     history: $("#page-history"),
     ki: $("#page-ki"),
+    auslasten: $("#page-auslasten"),
   };
 
   let session = null;
@@ -36,6 +37,11 @@
     isAdmin: () => session?.role === "admin",
   });
   HistoryPage.init({
+    api,
+    toast,
+    reload: () => loadData(),
+  });
+  AutoFillPage.init({
     api,
     toast,
     reload: () => loadData(),
@@ -119,6 +125,7 @@
     if (name === "users") loadUsers();
     if (name === "history") HistoryPage.load();
     if (name === "ki") KiPage.show();
+    if (name === "auslasten") AutoFillPage.render();
   }
 
   function render() {
@@ -159,6 +166,7 @@
     const data = { pros, types, events };
     Events.setData(data);
     Planner.setData(data);
+    AutoFillPage.setData(data);
     if (currentPage === "pros") renderPros();
   }
 

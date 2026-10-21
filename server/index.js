@@ -363,6 +363,33 @@ api.post("/events/bulk-delete", ...bulkRoute(
   (b) => `Sammellöschung: ${b.deleted.length} Termine`
 ));
 
+// --- Auslasten: Kurse automatisch verteilen, Ziel je Pro (Reiter «Auslasten») ---
+
+// { ziele: [{ pro, prozent }], typen?, von?, bis?, freie_tage_beachten?, dry_run? }
+// Admins speichern die Ziele dabei als Soll-Auslastung der Pros.
+api.post("/autofill", auth.requireLogin,
+  versioned((req, b) => (b.dryRun || !b.count ? null : `Auslasten: ${b.summary.length} Pros (${b.count} Termine)`)),
+  async (req, res) => {
+    const dryRun = req.body.dry_run === true;
+    try {
+      const r = await planning.autoFill(req.body, { dryRun, userId: req.session.id || null });
+      if (!dryRun && ["admin", "api"].includes(req.session.role)) {
+        for (const z of req.body.ziele || []) {
+          await pool.query("UPDATE pros SET auslastung_soll_prozent = $1 WHERE id = $2", [Math.round(Number(z.prozent)), Number(z.pro) || 0]);
+        }
+      }
+      res.json({
+        dryRun,
+        count: r.created.length,
+        summary: r.summary,
+        created: dryRun ? [] : r.created.map((e) => e.id),
+      });
+    } catch (err) {
+      if (err instanceof planning.PlanningError) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+  });
+
 // --- Export (nur lesend): alle Daten als JSON, ohne Passwörter und Sitzungen ---
 
 api.get("/export", limitExport, auth.requireAdminOrExportToken, async (req, res) => {

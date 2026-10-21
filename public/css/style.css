@@ -464,6 +464,25 @@ fieldset > .btn { align-self: flex-start; }
 .toast { display: flex; align-items: center; gap: 14px; }
 .toast button { border: 0; background: none; padding: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
 
+/* Auslasten */
+.af-opts { display: flex; flex-direction: column; gap: 12px; }
+.af-row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.af-date { flex-direction: row; align-items: center; gap: 8px; font-weight: 600; }
+.af-date input { width: 150px; height: 30px; }
+.af-all { flex-direction: row; align-items: center; gap: 8px; font-size: 12.5px; }
+.af-all input, .af-goal input { width: 160px; accent-color: #9b5cff; padding: 0; height: auto; border: 0; background: none; }
+.af-all input:focus, .af-goal input:focus { box-shadow: none; }
+.af-scroll { overflow-x: auto; }
+.af-table td { vertical-align: middle; }
+.af-now { white-space: nowrap; }
+.af-bar { display: inline-block; width: 90px; height: 6px; border-radius: 3px; background: var(--surface-3); margin-right: 8px; vertical-align: middle; overflow: hidden; }
+.af-bar i { display: block; height: 100%; background: var(--accent); }
+.af-goal { white-space: nowrap; }
+.af-goal b { display: inline-block; min-width: 46px; text-align: right; margin-left: 8px; }
+.af-table td.af-result, .af-table th:last-child { font-size: 12.5px; text-align: left; }
+.af-warn { color: var(--crit-ink); font-weight: 600; }
+#af-note { margin-right: auto; color: var(--ink-3); font-size: 12.5px; align-self: center; }
+
 /* KI: leuchtender Farbverlauf wie in modernen KI-Oberflächen */
 :root { --ai-grad: linear-gradient(120deg, #4f7cff, #9b5cff 35%, #ff4fa3 68%, #ff9d4d); --ai-glow: rgba(155, 92, 255, .45); }
 @keyframes ai-flow { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }

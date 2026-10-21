@@ -340,9 +340,14 @@ const WEEKDAY_INDEX = Object.fromEntries(eventsData.WEEKDAYS.map((d, i) => [d.to
 // gezählt wie in der Übersicht über alle Events) erreicht ist. Die Serien werden gleichmässig über den
 // Zeitraum verteilt; es gelten nur die Regeln des Tools (keine Überschneidung, Wochentag, feste Zeit),
 // auf Wunsch zusätzlich die freien Wochentage der Pros. Ganz oder gar nicht, eine Transaktion.
-async function autoFill({ pros, ziel_prozent, typen, von, bis, freie_tage_beachten = false } = {}, { dryRun = false, userId = null } = {}) {
-  const goalPercent = Number(ziel_prozent);
-  if (!(goalPercent > 0 && goalPercent <= 200)) throw new PlanningError("Ziel-Auslastung: bitte eine Zahl zwischen 1 und 200 (%).");
+// ziele: [{ pro, prozent }] = eigenes Ziel je Pro (statt ziel_prozent für alle bzw. die Liste pros).
+async function autoFill({ pros, ziel_prozent, ziele, typen, von, bis, freie_tage_beachten = false } = {}, { dryRun = false, userId = null } = {}) {
+  const checkPercent = (v) => {
+    const n = Number(v);
+    if (!(n >= 0 && n <= 200)) throw new PlanningError("Ziel-Auslastung: bitte eine Zahl zwischen 0 und 200 (%).");
+    return n;
+  };
+  if (!ziele?.length) checkPercent(ziel_prozent);
   const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
   const from = isDate(von) ? von : "2027-01-01";
   const to = isDate(bis) ? bis : "2027-12-31";
@@ -350,9 +355,11 @@ async function autoFill({ pros, ziel_prozent, typen, von, bis, freie_tage_beacht
 
   return transaction(dryRun, "created", async (db) => {
     const lk = await lookups(db);
-    const proList = pros?.length
-      ? pros.map((p) => findPro(lk, p) || (() => { throw new PlanningError(`Pro «${p}» nicht gefunden.`); })())
-      : lk.pros.filter((p) => p.sollstunden > 0);
+    const requirePro = (p) => findPro(lk, p) || (() => { throw new PlanningError(`Pro «${p}» nicht gefunden.`); })();
+    const targets = ziele?.length
+      ? ziele.map((z) => ({ pro: requirePro(z.pro), percent: checkPercent(z.prozent) }))
+      : (pros?.length ? pros.map(requirePro) : lk.pros.filter((p) => p.sollstunden > 0))
+          .map((pro) => ({ pro, percent: Number(ziel_prozent) }));
     const types = typen?.length
       ? typen.map((t) => findType(lk, t) || (() => { throw new PlanningError(`Event-Typ «${t}» nicht gefunden.`); })())
       : lk.types.filter((t) => t.fixed_start_min !== null);
@@ -391,7 +398,7 @@ async function autoFill({ pros, ziel_prozent, typen, von, bis, freie_tage_beacht
 
     const toInsert = [];
     const summary = [];
-    for (const pro of proList) {
+    for (const { pro, percent: goalPercent } of targets) {
       const before = planned.get(pro.id) || 0;
       if (!pro.sollstunden) {
         summary.push({ pro: pro.name, hinweis: "keine Sollstunden" });
