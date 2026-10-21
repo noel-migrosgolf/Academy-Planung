@@ -236,7 +236,7 @@ async function bulkCreate(items, { dryRun = false, userId = null } = {}) {
         await assertFree(db, ev, 0, `${label}${planned.length > 1 ? `Termin ${ev.series_index}: ` : ""}`);
         const { rows } = await db.query(
           `INSERT INTO events (type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${EVENT_FIELDS}`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${EVENT_FIELDS}, created_at`,
           [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz, ev.series_id, ev.series_index, userId]
         );
         created.push(rows[0]);
@@ -255,7 +255,7 @@ async function bulkDelete(ids, { serie = false, dryRun = false } = {}) {
       `DELETE FROM events
         WHERE id = ANY($1::int[])
            OR ($2 AND series_id IN (SELECT series_id FROM events WHERE id = ANY($1::int[]) AND series_id IS NOT NULL))
-        RETURNING ${EVENT_FIELDS}`,
+        RETURNING ${EVENT_FIELDS}, created_by, created_at`,
       [clean, serie]
     );
     const found = new Set(rows.map((r) => r.id));
@@ -270,6 +270,7 @@ async function bulkUpdate(changes, { dryRun = false } = {}) {
   return transaction(dryRun, "updated", async (db) => {
     const lk = await lookups(db);
     const updated = [];
+    const previous = []; // Stand vorher, für «Rückgängig»
     const errors = [];
     await eachItem(db, changes, errors, async (c) => {
       const id = Number.parseInt(c.event_id, 10) || 0;
@@ -295,8 +296,64 @@ async function bulkUpdate(changes, { dryRun = false } = {}) {
         [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz, id]
       );
       updated.push(done[0]);
+      previous.push(current);
     });
-    return { updated, errors, dryRun };
+    return { updated, previous, errors, dryRun };
+  });
+}
+
+// Nimmt genau eine Sammel-Aktion zurück, ohne andere Daten zu berühren:
+// undo = { created: [{ id, created_at }] } | { deleted: [Zeilen] } | { updated: [Zeilen vorher] }.
+// Angelegte Events werden nur gelöscht, wenn auch der Erstellungszeitpunkt passt
+// (nach einer Wiederherstellung können IDs neu vergeben werden).
+// Ganz oder gar nicht; Konflikte (z. B. Überschneidung mit neueren Events) kommen als errors zurück.
+async function undoChange(undo) {
+  return transaction(false, "done", async (db) => {
+    const errors = [];
+    let done = 0;
+    if (undo.created?.length) {
+      const { rowCount } = await db.query(
+        `DELETE FROM events e USING unnest($1::int[], $2::timestamptz[]) AS u(id, created_at)
+          WHERE e.id = u.id AND date_trunc('milliseconds', e.created_at) = u.created_at`,
+        [undo.created.map((c) => c.id), undo.created.map((c) => c.created_at)]
+      );
+      done += rowCount;
+    }
+    await eachItem(db, undo.deleted || [], errors, async (row) => {
+      const label = `Event ${row.id} (${formatDate(row.date)}): `;
+      const { rows } = await db.query("SELECT 1 FROM events WHERE id = $1", [row.id]);
+      if (rows.length) throw new PlanningError(`${label}existiert bereits wieder.`);
+      await assertFree(db, row, row.id, label);
+      try {
+        await db.query(
+          `INSERT INTO events (id, type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT id FROM users WHERE id = $10), coalesce($11, now()))`,
+          [row.id, row.type_id, row.pro_id, row.date, row.start_min, row.end_min, row.notiz, row.series_id, row.series_index,
+            row.created_by ?? null, row.created_at ?? null]
+        );
+      } catch (err) {
+        if (err.code === "23503") throw new PlanningError(`${label}Pro oder Event-Typ gibt es nicht mehr.`);
+        throw err;
+      }
+      done++;
+    });
+    await eachItem(db, undo.updated || [], errors, async (row) => {
+      const label = `Event ${row.id}: `;
+      const { rows } = await db.query("SELECT 1 FROM events WHERE id = $1 FOR UPDATE", [row.id]);
+      if (!rows.length) throw new PlanningError(`${label}wurde inzwischen gelöscht.`);
+      await assertFree(db, row, row.id, label);
+      try {
+        await db.query(
+          "UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6 WHERE id = $7",
+          [row.type_id, row.pro_id, row.date, row.start_min, row.end_min, row.notiz, row.id]
+        );
+      } catch (err) {
+        if (err.code === "23503") throw new PlanningError(`${label}Pro oder Event-Typ gibt es nicht mehr.`);
+        throw err;
+      }
+      done++;
+    });
+    return { done, errors };
   });
 }
 
@@ -315,5 +372,5 @@ async function describeEvents(list) {
 module.exports = {
   TYPE_FIELDS, EVENT_FIELDS, PlanningError,
   loadType, assertFree, formatDate, clock, timeArg, minutesOf,
-  overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, describeEvents,
+  overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, undoChange, describeEvents,
 };

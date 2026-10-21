@@ -214,13 +214,13 @@ async function versionBefore(session) {
 }
 
 // Führt eine Änderung aus und hält sie als rückgängig machbare Version fest.
-async function change(ctx, describe, run) {
-  const before = await versionBefore(ctx.session);
+// undoOf(result) beschreibt, wie sich genau diese Änderung zurücknehmen lässt.
+async function change(ctx, describe, run, undoOf) {
   const result = await run();
   if (result.dryRun || result.errors.length) return result;
   const text = await describe(result);
-  const after = await history.record(actor(ctx.session), text);
-  ctx.items.push({ type: "change", text, before, after });
+  await history.record(actor(ctx.session), text);
+  ctx.items.push({ type: "change", text, undo: undoOf(result) });
   return result;
 }
 
@@ -234,19 +234,22 @@ async function runTool(ctx, name, input) {
     case "events_anlegen": {
       const r = await change(ctx,
         async (r) => `KI plant: ${await planning.describeEvents(r.created)}`,
-        () => planning.bulkCreate(input.events, { dryRun, userId: ctx.session.id || null }));
+        () => planning.bulkCreate(input.events, { dryRun, userId: ctx.session.id || null }),
+        (r) => ({ created: r.created.map((e) => ({ id: e.id, created_at: e.created_at })) }));
       return resultText(r, r.dryRun ? "anlegen" : "angelegt", r.created);
     }
     case "events_aendern": {
       const r = await change(ctx,
         async (r) => `KI ändert: ${await planning.describeEvents(r.updated)}`,
-        () => planning.bulkUpdate(input.aenderungen, { dryRun }));
+        () => planning.bulkUpdate(input.aenderungen, { dryRun }),
+        (r) => ({ updated: r.previous }));
       return resultText(r, r.dryRun ? "ändern" : "geändert", r.updated);
     }
     case "events_loeschen": {
       const r = await change(ctx,
         async (r) => `KI löscht: ${await planning.describeEvents(r.deleted)}`,
-        () => planning.bulkDelete(input.ids, { serie: input.ganze_serie === true, dryRun }));
+        () => planning.bulkDelete(input.ids, { serie: input.ganze_serie === true, dryRun }),
+        (r) => ({ deleted: r.deleted }));
       return resultText(r, r.dryRun ? "löschen" : "gelöscht", r.deleted);
     }
     case "verlauf": {
@@ -429,7 +432,7 @@ function publicChat(chat) {
   return {
     id: chat.id,
     title: chat.title,
-    items: chat.display,
+    items: chat.display.map(({ undo, before, after, ...item }) => item), // Rückgängig-Daten bleiben auf dem Server
     usage: chat.usage,
     long: (chat.usage.last_context || 0) > LONG_CHAT_TOKENS,
   };
@@ -503,8 +506,9 @@ router.post("/chats/:id/messages", async (req, res) => {
   }
 });
 
-// Macht eine Änderung aus dem Chat rückgängig (Stand vor der Änderung wiederherstellen).
-// Wurde seither weiter geplant, ist «force» nötig – das dürfen nur Admins, weil es spätere Änderungen verwirft.
+// Macht eine Änderung aus dem Chat rückgängig. Event-Änderungen werden gezielt zurückgenommen
+// (andere Daten bleiben unberührt). Eine von der KI wiederhergestellte Version setzt dagegen den ganzen
+// Stand zurück; wurde seither weiter geplant, ist dafür «force» nötig – das dürfen nur Admins.
 router.post("/chats/:id/undo", async (req, res) => {
   const chat = await loadChat(req, res);
   if (!chat) return;
@@ -512,6 +516,16 @@ router.post("/chats/:id/undo", async (req, res) => {
   const item = chat.display[index];
   if (!item || item.type !== "change") return res.status(400).json({ error: "Änderung nicht gefunden." });
   if (item.undone) return res.status(409).json({ error: "Diese Änderung wurde bereits rückgängig gemacht." });
+  if (item.undo) {
+    const result = await planning.undoChange(item.undo);
+    if (result.errors.length) {
+      return res.status(409).json({
+        error: `Rückgängig nicht möglich, nichts geändert: ${result.errors.map((e) => e.fehler).join(" ")}`,
+      });
+    }
+    await history.record(`${req.session.name} (KI rückgängig)`, `Rückgängig: ${item.text}`);
+    return markUndone(res, chat, index, `Der Benutzer hat «${item.text}» rückgängig gemacht (nur diese Änderung).`);
+  }
   if (!(await history.matchesCurrent(item.after))) {
     if (!(req.body.force === true && canRestore(req.session))) {
       return res.status(409).json({
@@ -525,13 +539,16 @@ router.post("/chats/:id/undo", async (req, res) => {
   if (!(await history.restore(item.before, `${req.session.name} (KI rückgängig)`))) {
     return res.status(404).json({ error: "Die Version vor dieser Änderung ist nicht mehr vorhanden." });
   }
+  await markUndone(res, chat, index, `Der Benutzer hat «${item.text}» rückgängig gemacht; die Daten sind wieder wie vor dieser Änderung.`);
+});
+
+async function markUndone(res, chat, index, note) {
   const display = chat.display.map((d, i) => (i === index ? { ...d, undone: true } : d));
-  const notes = [...chat.notes, `Der Benutzer hat «${item.text}» rückgängig gemacht; die Daten sind wieder wie vor dieser Änderung.`];
   const { rows } = await pool.query(
     "UPDATE ai_chats SET display = $2, notes = $3, updated_at = now() WHERE id = $1 RETURNING *",
-    [chat.id, JSON.stringify(display), JSON.stringify(notes)]
+    [chat.id, JSON.stringify(display), JSON.stringify([...chat.notes, note])]
   );
   res.json({ chat: publicChat(rows[0]) });
-});
+}
 
 module.exports = { router, migrate };
