@@ -255,8 +255,16 @@
 
       <!-- Benutzerverwaltung (Admin) -->
       <section id="page-users" class="page" hidden>
-        <h1>Benutzer</h1>
-        <p class="lead">Benutzerkonten für das Planungstool anlegen und verwalten.</p>
+        <div class="page-head">
+          <div>
+            <h1>Benutzer</h1>
+            <p class="lead">Benutzerkonten für das Planungstool anlegen und verwalten.</p>
+          </div>
+          <a class="btn" href="/api/export" download title="Pros, Event-Typen, Events und Benutzer (ohne Passwörter) als JSON-Datei">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+            Daten exportieren
+          </a>
+        </div>
         <div class="users-layout">
           <form id="user-form" class="card">
             <div class="hd"><h3>Neuer Benutzer</h3></div>

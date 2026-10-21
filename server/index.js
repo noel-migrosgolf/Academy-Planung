@@ -16,6 +16,7 @@ app.use(auth.loadSession);
 
 const api = express.Router();
 const limitLogin = auth.loginRateLimit();
+const limitExport = auth.loginRateLimit({ max: 60 });
 
 api.get("/health", (req, res) => res.json({ ok: true }));
 
@@ -321,6 +322,26 @@ api.delete("/events/:id", auth.requireLogin, async (req, res) => {
       )
     : await pool.query(`DELETE FROM events WHERE id = $1 RETURNING ${EVENT_FIELDS}`, [eventId]);
   res.json({ deleted: rows });
+});
+
+// --- Export (nur lesend): alle Daten als JSON, ohne Passwörter und Sitzungen ---
+
+api.get("/export", limitExport, auth.requireAdminOrExportToken, async (req, res) => {
+  const [users, pros, types, events] = await Promise.all([
+    pool.query("SELECT id, name, username, is_admin, created_at FROM users ORDER BY id"),
+    pool.query(`SELECT ${PRO_FIELDS}, sort_order, created_at FROM pros ORDER BY sort_order, id`),
+    pool.query(`SELECT ${TYPE_FIELDS}, sort_order, created_at FROM event_types ORDER BY sort_order, id`),
+    pool.query(`SELECT ${EVENT_FIELDS}, created_by, created_at FROM events ORDER BY date, start_min, id`),
+  ]);
+  const stamp = new Date().toISOString();
+  res.set("Content-Disposition", `attachment; filename="academy-planung-${stamp.slice(0, 10)}.json"`);
+  res.json({
+    exported_at: stamp,
+    users: users.rows,
+    pros: pros.rows,
+    event_types: types.rows,
+    events: events.rows,
+  });
 });
 
 app.use("/api", api);

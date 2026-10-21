@@ -27,6 +27,7 @@ Dann <http://localhost:3000> öffnen.
 | `DATABASE_URL` | Verbindungs-URL der PostgreSQL-Datenbank |
 | `ADMIN_PASSWORD` | Passwort für den Admin-Bereich |
 | `DATABASE_SSL` | `true`, wenn die Datenbank SSL verlangt (z. B. externe Render-URL) |
+| `EXPORT_TOKEN` | Optional: Schlüssel für den Lesezugriff auf `GET /api/export` ohne Anmeldung (Header `X-Export-Token`) |
 | `NODE_ENV` | `production` auf dem Server (sichere Cookies) |
 
 ## Deployment auf Render
@@ -42,3 +43,4 @@ Build Command `npm ci` und Start Command `npm start`.
 - **Pros**: Übersicht mit Einstellungen je Pro (Kürzel, Sollstunden, Einsatzbereiche Kurse/Bambini/GCE, freie Tage, Soll-Auslastung, Abwesenheiten, Verfügbarkeitsregel). Pro Pro wird die Auslastung 2027 angezeigt: geplante Stunden (Summe der zugewiesenen Events, brutto) in Prozent der Sollstunden, mit Balken, Markierung der Soll-Auslastung und den offenen Stunden bis zum Ziel. Admins können Pros anlegen, bearbeiten und löschen. Startwerte in `server/pros.js`.
 - **Schulferien** (`public/js/calendar.js`): Jahresübersicht 2027 mit den Schulferien und schulfreien Tagen des Kantons Zug (`public/js/ferien.js`).
 - **Benutzer** (nur Admin): Benutzer anlegen und löschen, Admin-Rechte pro Benutzer vergeben oder entziehen (wirkt sofort).
+- **Export** (nur lesend): `GET /api/export` liefert Benutzer (ohne Passwörter), Pros, Event-Typen und Events als JSON. Admins nutzen den Button «Daten exportieren» auf der Benutzer-Seite; ohne Anmeldung nur mit Header `X-Export-Token`.

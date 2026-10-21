@@ -87,6 +87,7 @@ button, input, select { font: inherit; color: inherit; }
 .btn:focus-visible, .nav button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-ring); border-color: var(--accent); }
 .btn.primary { background: var(--btn-dark); border-color: var(--btn-dark); color: var(--btn-dark-text); }
 .btn.primary:hover:not(:disabled) { background: var(--btn-dark-hover); border-color: var(--btn-dark-hover); color: var(--btn-dark-text); }
+a.btn { text-decoration: none; }
 .btn.ghost { border-color: transparent; background: transparent; }
 .btn.icon { width: 34px; padding: 0; }
 .btn.danger { color: var(--crit-ink); }

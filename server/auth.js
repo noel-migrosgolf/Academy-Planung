@@ -26,6 +26,21 @@ function verifyAdminPassword(password) {
   return crypto.timingSafeEqual(a, b);
 }
 
+// Export-Zugang ohne Anmeldung: Header «X-Export-Token» muss EXPORT_TOKEN entsprechen.
+function verifyExportToken(token) {
+  const expected = process.env.EXPORT_TOKEN;
+  if (!expected || !token) return false;
+  const a = crypto.createHash("sha256").update(String(token)).digest();
+  const b = crypto.createHash("sha256").update(expected).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+// Admins (angemeldet) oder ein gültiger Export-Token
+function requireAdminOrExportToken(req, res, next) {
+  if (req.session?.role === "admin" || verifyExportToken(req.get("x-export-token"))) return next();
+  res.status(403).json({ error: "Keine Berechtigung." });
+}
+
 function sha256(text) {
   return crypto.createHash("sha256").update(text).digest("hex");
 }
@@ -126,5 +141,6 @@ module.exports = {
   loadSession,
   requireLogin,
   requireAdmin,
+  requireAdminOrExportToken,
   loginRateLimit,
 };
