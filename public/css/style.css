@@ -380,7 +380,7 @@ table.t tr.clickable { cursor: pointer; }
 .series-row .n { font-weight: 600; }
 .series-row .d { color: var(--ink-2); font-variant-numeric: tabular-nums; }
 input:disabled, select:disabled { background: var(--surface-2); color: var(--ink-3); cursor: not-allowed; }
-.name-color { grid-template-columns: 1fr 90px; }
+.grid2.type-head { grid-template-columns: 1fr 110px 70px; }
 input[type="color"] { padding: 3px; height: 34px; cursor: pointer; }
 
 /* Pros */

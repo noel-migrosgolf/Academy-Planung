@@ -40,7 +40,7 @@ const SEED_SERIES_TYPES = [
 ];
 
 const TYPE_COLUMNS = [
-  "name", "color", "calc", "brutto_min", "netto_min", "brutto_fix_min", "netto_fix_min",
+  "code", "name", "color", "calc", "brutto_min", "netto_min", "brutto_fix_min", "netto_fix_min",
   "fixed_start_min", "fixed_end_min", "first_weekday", "series_offsets", "series_times",
 ];
 
@@ -70,11 +70,16 @@ function minutes(value, label) {
 function normalizeType(body) {
   const name = String(body.name || "").trim();
   if (!name) throw new ValidationError("Bitte einen Namen eingeben.");
+  // ID: frei wählbar (z. B. «PR2A»), eindeutig, von Admins änderbar
+  const code = String(body.code ?? "").trim() || null;
+  if (code && (code.length > 30 || /[|\s]/.test(code))) {
+    throw new ValidationError("ID: höchstens 30 Zeichen, ohne Leerzeichen und «|».");
+  }
   const color = String(body.color || "#6a8fd8");
   if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new ValidationError("Ungültige Farbe.");
 
   const calc = body.calc === "pauschal" ? "pauschal" : "faktor";
-  const t = { name, color, calc, brutto_min: 30, netto_min: 30, brutto_fix_min: null, netto_fix_min: null };
+  const t = { code, name, color, calc, brutto_min: 30, netto_min: 30, brutto_fix_min: null, netto_fix_min: null };
   if (calc === "faktor") {
     t.brutto_min = int(body.brutto_min, "Brutto (Minuten pro 30 min)", 0, 30);
     t.netto_min = int(body.netto_min, "Netto (Minuten pro 30 min)", 0, 30);

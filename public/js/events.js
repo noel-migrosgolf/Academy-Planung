@@ -347,6 +347,7 @@
     $("#type-delete").hidden = !type;
     const f = form.elements;
     f.name.value = type?.name || "";
+    f.code.value = type?.code || "";
     f.color.value = type?.color || "#6a8fd8";
     f.calc.value = type?.calc || "faktor";
     f.brutto_min.value = type?.brutto_min ?? 30;
@@ -369,6 +370,7 @@
     const toMin = (v) => (v === "" ? null : Math.round(Number(v) * 60));
     return {
       name: f.name.value,
+      code: f.code.value,
       color: f.color.value,
       calc: f.calc.value,
       brutto_min: Number(f.brutto_min.value),
@@ -409,7 +411,7 @@
         ? "frei wählbar"
         : `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}${booked > t.fixed_end_min ? `, Puffer bis ${clock(booked)}` : ""}`;
       const terms = isSeriesType(t) ? `${t.series_offsets.length} (${patternText(t)})` : t.first_weekday !== null ? `1 (${D.WEEKDAYS[t.first_weekday]})` : "1";
-      tr.append(name, el("td", "muted", hoursText(t)), el("td", "tab", time), el("td", "", terms));
+      tr.append(el("td", "tab muted", t.code || "–"), name, el("td", "muted", hoursText(t)), el("td", "tab", time), el("td", "", terms));
       const actions = el("td");
       if (ctx.isAdmin()) {
         const btn = el("button", "btn sm", "Bearbeiten");

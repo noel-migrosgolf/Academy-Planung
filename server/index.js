@@ -177,6 +177,7 @@ async function saveType(res, run) {
     res.json({ type: rows[0] });
   } catch (err) {
     if (err instanceof eventsData.ValidationError) return res.status(400).json({ error: err.message });
+    if (err.code === "23505") return res.status(409).json({ error: "Diese ID ist bereits vergeben." });
     throw err;
   }
 }

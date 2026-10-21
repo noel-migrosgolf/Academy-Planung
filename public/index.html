@@ -198,7 +198,7 @@
             <button id="btn-new-type" class="btn sm" hidden>+ Neuer Typ</button>
           </div>
           <table class="t">
-            <thead><tr><th>Typ</th><th>Stunden</th><th>Zeit</th><th>Termine</th><th></th></tr></thead>
+            <thead><tr><th>ID</th><th>Typ</th><th>Stunden</th><th>Zeit</th><th>Termine</th><th></th></tr></thead>
             <tbody id="type-list"></tbody>
           </table>
           <p id="type-empty" class="empty">Noch keine Event-Typen.</p>
@@ -489,9 +489,12 @@
     <form id="type-form" class="card" novalidate>
       <div class="hd"><h3 id="type-title">Neuer Event-Typ</h3></div>
       <div class="bd form">
-        <div class="grid2 name-color">
+        <div class="grid2 type-head">
           <label>Name
             <input name="name" type="text" required>
+          </label>
+          <label>ID
+            <input name="code" type="text" maxlength="30" placeholder="z. B. PR2A" autocomplete="off">
           </label>
           <label>Farbe
             <input name="color" type="color">

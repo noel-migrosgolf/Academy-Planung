@@ -110,7 +110,7 @@ const TOOLS = [
           items: {
             type: "object",
             properties: {
-              typ: { type: "string" },
+              typ: { type: "string", description: "Name oder ID" },
               pro: { type: "string", description: "Name oder Kürzel" },
               datum: DATE,
               von: { ...TIME, description: "HH:MM, entfällt bei fester Zeit des Typs" },

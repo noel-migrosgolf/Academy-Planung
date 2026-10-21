@@ -74,7 +74,7 @@ function findType(lk, value) {
   if (value === null || value === undefined || value === "") return null;
   if (Number.isInteger(value)) return lk.types.find((t) => t.id === value) || null;
   const v = String(value).trim().toLowerCase();
-  return lk.types.find((t) => t.name.toLowerCase() === v) || null;
+  return lk.types.find((t) => t.name.toLowerCase() === v || (t.code || "").toLowerCase() === v) || null;
 }
 
 function requirePro(lk, value, label) {
@@ -122,6 +122,7 @@ async function overview({ from, to, pro } = {}, db = pool) {
       };
     }),
     typen: lk.types.map((t) => ({
+      id: t.code,
       name: t.name,
       stunden: t.calc === "pauschal"
         ? `pro Termin ${t.brutto_fix_min / 60} h brutto, ${t.netto_fix_min / 60} h netto`
@@ -158,9 +159,9 @@ function overviewText(o, { maxEvents = 400, parts = ["pros", "typen", "events"] 
     }
   }
   if (parts.includes("typen")) {
-    lines.push("TYPEN (Name|Stunden|Zeit|erster Wochentag|Termine Tage ab Start)");
+    lines.push("TYPEN (ID|Name|Stunden|Zeit|erster Wochentag|Termine Tage ab Start)");
     for (const t of o.typen) {
-      lines.push([t.name, t.stunden, t.zeit, t.erster_wochentag || "-", t.termine_tage_ab_start.join(",")].join("|"));
+      lines.push([t.id || "-", t.name, t.stunden, t.zeit, t.erster_wochentag || "-", t.termine_tage_ab_start.join(",")].join("|"));
     }
   }
   if (parts.includes("events")) {
