@@ -203,9 +203,15 @@ api.post("/event-types", auth.requireDataAdmin, (req, res) =>
 
 api.put("/event-types/:id", auth.requireDataAdmin, (req, res) =>
   saveType(res, async () => {
-    const t = eventsData.normalizeType(req.body);
-    const cols = eventsData.TYPE_COLUMNS;
     const typeId = Number.parseInt(req.params.id, 10) || 0;
+    // Fehlt der Einsatzbereich in der Anfrage (z. B. ältere Seite im Browser-Cache), bleibt er unverändert.
+    const body = { ...req.body };
+    if (!("einsatzbereich" in body)) {
+      const { rows } = await pool.query("SELECT einsatzbereich FROM event_types WHERE id = $1", [typeId]);
+      body.einsatzbereich = rows[0]?.einsatzbereich ?? null;
+    }
+    const t = eventsData.normalizeType(body);
+    const cols = eventsData.TYPE_COLUMNS;
     const result = await pool.query(
       `UPDATE event_types SET ${cols.map((c, i) => `${c} = $${i + 1}`).join(", ")}
         WHERE id = $${cols.length + 1} RETURNING ${TYPE_FIELDS}`,
