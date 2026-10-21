@@ -48,6 +48,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18M8 14h3v3H8z"/></svg>
         Events
       </button>
+      <button data-page="planned">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>
+        Geplante Events
+      </button>
       <button data-page="pros">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7.5" r="3.5"/><path d="M5 20c.9-3.6 3.7-6 7-6s6.1 2.4 7 6"/></svg>
         Pros
@@ -170,9 +174,9 @@
         <div class="page-head">
           <div>
             <h1>Events</h1>
-            <p class="lead">Events planen und Event-Typen verwalten. Events lassen sich auch direkt im Kalender (Tagesansicht) erstellen: Zeitraum aufziehen oder klicken.</p>
+            <p class="lead">Event-Typen verwalten und Events planen. Events lassen sich auch direkt im Kalender erstellen: Zeitraum aufziehen, klicken oder Rechtsklick.</p>
           </div>
-          <button id="btn-new-event" class="btn primary">
+          <button class="btn primary" data-new-event>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
             Event erstellen
           </button>
@@ -191,9 +195,23 @@
           </table>
           <p id="type-empty" class="empty">Noch keine Event-Typen.</p>
         </div>
+      </section>
+
+      <!-- Geplante Events -->
+      <section id="page-planned" class="page" hidden>
+        <div class="page-head">
+          <div>
+            <h1>Geplante Events</h1>
+            <p class="lead">Alle geplanten Events mit Brutto- und Netto-Stunden. Klick öffnet ein Event, Rechtsklick zeigt weitere Aktionen.</p>
+          </div>
+          <button class="btn primary" data-new-event>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            Event erstellen
+          </button>
+        </div>
 
         <div class="card stack">
-          <div class="hd"><h3>Geplante Events</h3><span class="sub" id="event-sum"></span></div>
+          <div class="hd"><h3>Alle Events</h3><span class="sub" id="event-sum"></span></div>
           <table class="t" id="event-table">
             <thead><tr><th>Datum</th><th>Zeit</th><th>Pro</th><th>Typ</th><th class="num">Brutto</th><th class="num">Netto</th><th>Notiz</th></tr></thead>
             <tbody id="event-list"></tbody>

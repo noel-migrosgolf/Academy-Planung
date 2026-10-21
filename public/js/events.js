@@ -455,7 +455,7 @@
 
   function setData(next) {
     data = next;
-    if (!$("#page-events").hidden) render();
+    if (!$("#page-events").hidden || !$("#page-planned").hidden) render();
   }
 
   // --- Initialisierung ---
@@ -536,7 +536,7 @@
       }
     });
 
-    $("#btn-new-event").addEventListener("click", () => openEvent(null));
+    document.querySelectorAll("[data-new-event]").forEach((btn) => btn.addEventListener("click", () => openEvent(null)));
     $("#btn-new-type").addEventListener("click", () => openType(null));
   }
 

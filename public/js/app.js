@@ -11,6 +11,7 @@
   const pages = {
     calendar: $("#page-calendar"),
     events: $("#page-events"),
+    planned: $("#page-planned"),
     pros: $("#page-pros"),
     ferien: $("#page-ferien"),
     users: $("#page-users"),
@@ -97,7 +98,7 @@
     for (const [key, el] of Object.entries(pages)) el.hidden = key !== name;
     $$(".nav button[data-page]").forEach((b) => b.classList.toggle("on", b.dataset.page === name));
     if (name === "calendar") Planner.render();
-    if (name === "events") Events.render();
+    if (name === "events" || name === "planned") Events.render();
     if (name === "pros") renderPros();
     if (name === "ferien") {
       $("#cal-year").textContent = YEAR;
