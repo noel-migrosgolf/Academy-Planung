@@ -5,7 +5,10 @@ const auth = require("./auth");
 const prosData = require("./pros");
 const eventsData = require("./events");
 const history = require("./history");
+const planning = require("./planning");
+const ai = require("./ai");
 const { versioned } = history;
+const { TYPE_FIELDS, EVENT_FIELDS, loadType, assertFree, describeEvents } = planning;
 
 const app = express();
 app.set("trust proxy", 1); // Render sitzt vor der App
@@ -162,14 +165,6 @@ api.delete("/pros/:id", auth.requireDataAdmin, versioned((req, b) => `Pro «${b.
 
 // --- Event-Typen (Vorlagen, nur Admins bearbeiten) ---
 
-const TYPE_FIELDS = `id, ${eventsData.TYPE_COLUMNS.join(", ")}`;
-
-async function loadType(db, typeId) {
-  const { rows } = await db.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [typeId]);
-  if (!rows[0]) throw new eventsData.ValidationError("Event-Typ existiert nicht.");
-  return rows[0];
-}
-
 api.get("/event-types", auth.requireLogin, async (req, res) => {
   const { rows } = await pool.query(`SELECT ${TYPE_FIELDS} FROM event_types ORDER BY sort_order, id`);
   res.json({ types: rows });
@@ -230,9 +225,6 @@ api.delete("/event-types/:id", auth.requireDataAdmin, versioned((req, b) => `Eve
 
 // --- Events (geplante Einsätze, einzeln oder als Serie) ---
 
-const EVENT_FIELDS =
-  "id, type_id, pro_id, to_char(date, 'YYYY-MM-DD') AS date, start_min, end_min, notiz, series_id, series_index";
-
 api.get("/events", auth.requireLogin, async (req, res) => {
   const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || "") ? req.query.from : "0001-01-01";
   const to = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || "") ? req.query.to : "9999-12-31";
@@ -259,37 +251,6 @@ async function inTransaction(res, fn) {
   } finally {
     db.release();
   }
-}
-
-function formatDate(iso) {
-  const [y, m, d] = iso.split("-");
-  return `${d}.${m}.${y}`;
-}
-
-// Überschneidung mit einem anderen Event desselben Pros?
-async function assertFree(db, ev, ignoreId, label) {
-  const { rows } = await db.query(
-    `SELECT 1 FROM events
-      WHERE pro_id = $1 AND date = $2 AND start_min < $4 AND end_min > $3 AND id <> $5 LIMIT 1`,
-    [ev.pro_id, ev.date, ev.start_min, ev.end_min, ignoreId || 0]
-  );
-  if (rows.length) {
-    const err = new eventsData.ValidationError(`${label}Der Pro hat am ${formatDate(ev.date)} in dieser Zeit bereits ein Event.`);
-    err.status = 409;
-    throw err;
-  }
-}
-
-// Kurzbeschreibung für den Verlauf, z. B. «Platzreife Teil 1 A · 09.01.2027 · Yannick (4 Termine)»
-async function describeEvents(list) {
-  if (!list?.length) return "Event";
-  const first = list[0];
-  const { rows } = await pool.query(
-    "SELECT (SELECT name FROM event_types WHERE id = $1) AS type, (SELECT name FROM pros WHERE id = $2) AS pro",
-    [first.type_id, first.pro_id]
-  );
-  const count = list.length > 1 ? ` (${list.length} Termine)` : "";
-  return `${rows[0].type ?? "Event"} · ${formatDate(first.date)} · ${rows[0].pro ?? "?"}${count}`;
 }
 
 api.post("/events", auth.requireLogin, versioned(async (req, b) => `Geplant: ${await describeEvents(b.events)}`), (req, res) =>
@@ -340,6 +301,58 @@ api.delete("/events/:id", auth.requireLogin, versioned(async (req, b) => `Gelös
   res.json({ deleted: rows });
 });
 
+// --- Lesefreundliche Übersicht und Sammel-Aktionen (für API und KI) ---
+
+const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
+
+// ?from=YYYY-MM-DD&to=YYYY-MM-DD&pro=Name|Kürzel&format=text
+api.get("/overview", auth.requireLogin, async (req, res) => {
+  try {
+    const o = await planning.overview({
+      from: isDate(req.query.from) ? req.query.from : null,
+      to: isDate(req.query.to) ? req.query.to : null,
+      pro: req.query.pro || null,
+    });
+    if (req.query.format === "text") return res.type("text/plain").send(planning.overviewText(o, { maxEvents: Infinity }));
+    res.json(o);
+  } catch (err) {
+    if (err instanceof planning.PlanningError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+});
+
+// Gemeinsamer Ablauf: «dry_run: true» prüft nur; ein echter Lauf mit Fehlern ändert nichts (409).
+function bulkRoute(run, describe) {
+  return [
+    auth.requireLogin,
+    versioned((req, b) => (b.dryRun || b.errors.length ? null : describe(b))),
+    async (req, res) => {
+      try {
+        const result = await run(req);
+        res.status(result.errors.length && !result.dryRun ? 409 : 200).json(result);
+      } catch (err) {
+        if (err instanceof planning.PlanningError) return res.status(400).json({ error: err.message });
+        throw err;
+      }
+    },
+  ];
+}
+
+api.post("/events/bulk", ...bulkRoute(
+  (req) => planning.bulkCreate(req.body.events, { dryRun: req.body.dry_run === true, userId: req.session.id || null }),
+  (b) => `Sammelplanung: ${b.created.length} Termine`
+));
+
+api.post("/events/bulk-update", ...bulkRoute(
+  (req) => planning.bulkUpdate(req.body.changes, { dryRun: req.body.dry_run === true }),
+  (b) => `Sammeländerung: ${b.updated.length} Termine`
+));
+
+api.post("/events/bulk-delete", ...bulkRoute(
+  (req) => planning.bulkDelete(req.body.ids, { serie: req.body.serie === true, dryRun: req.body.dry_run === true }),
+  (b) => `Sammellöschung: ${b.deleted.length} Termine`
+));
+
 // --- Export (nur lesend): alle Daten als JSON, ohne Passwörter und Sitzungen ---
 
 api.get("/export", limitExport, auth.requireAdminOrExportToken, async (req, res) => {
@@ -372,6 +385,8 @@ api.post("/versions/:id/restore", auth.requireDataAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+api.use("/ai", ai.router);
+
 app.use("/api", api);
 app.use("/api", (req, res) => res.status(404).json({ error: "Nicht gefunden." }));
 app.use(express.static(path.join(__dirname, "..", "public")));
@@ -385,6 +400,7 @@ const port = process.env.PORT || 3000;
 
 migrate()
   .then(() => history.migrate())
+  .then(() => ai.migrate())
   .then(() => app.listen(port, () => console.log(`Academy Planung läuft auf Port ${port}`)))
   .catch((err) => {
     console.error("Datenbank-Migration fehlgeschlagen:", err);

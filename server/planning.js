@@ -1,0 +1,317 @@
+// Planungslogik, gemeinsam genutzt von der API und der KI:
+// lesefreundliche Übersicht (Namen statt IDs) sowie Sammel-Aktionen
+// (anlegen, ändern, löschen) als Transaktion «alles oder nichts», wahlweise als Probelauf.
+
+const { pool } = require("./db");
+const eventsData = require("./events");
+
+const TYPE_FIELDS = `id, ${eventsData.TYPE_COLUMNS.join(", ")}`;
+const EVENT_FIELDS =
+  "id, type_id, pro_id, to_char(date, 'YYYY-MM-DD') AS date, start_min, end_min, notiz, series_id, series_index";
+
+class PlanningError extends eventsData.ValidationError {}
+
+async function loadType(db, typeId) {
+  const { rows } = await db.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [typeId]);
+  if (!rows[0]) throw new eventsData.ValidationError("Event-Typ existiert nicht.");
+  return rows[0];
+}
+
+function formatDate(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+// Uhrzeit «HH:MM» oder Minuten seit Mitternacht
+function timeArg(value) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(value ?? "").trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) : value;
+}
+
+function clock(min) {
+  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+}
+
+// Brutto bzw. Netto eines Events in Minuten (wie im Frontend, public/js/events.js)
+function minutesOf(ev, type, mode) {
+  if (!type) return 0;
+  if (type.calc === "pauschal") return mode === "netto" ? type.netto_fix_min : type.brutto_fix_min;
+  return ((ev.end_min - ev.start_min) * (mode === "netto" ? type.netto_min : type.brutto_min)) / 30;
+}
+
+// Überschneidung mit einem anderen Event desselben Pros?
+async function assertFree(db, ev, ignoreId, label) {
+  const { rows } = await db.query(
+    `SELECT 1 FROM events
+      WHERE pro_id = $1 AND date = $2 AND start_min < $4 AND end_min > $3 AND id <> $5 LIMIT 1`,
+    [ev.pro_id, ev.date, ev.start_min, ev.end_min, ignoreId || 0]
+  );
+  if (rows.length) {
+    const err = new eventsData.ValidationError(`${label}Der Pro hat am ${formatDate(ev.date)} in dieser Zeit bereits ein Event.`);
+    err.status = 409;
+    throw err;
+  }
+}
+
+// --- Namen auflösen (Pro per Name oder Kürzel, Typ per Name oder ID) ---
+
+async function lookups(db) {
+  const [pros, types] = await Promise.all([
+    db.query("SELECT id, code, name, sollstunden, freie_tage, kurse, bambinitraining, gce_training, abwesenheiten FROM pros ORDER BY sort_order, id"),
+    db.query(`SELECT ${TYPE_FIELDS} FROM event_types ORDER BY sort_order, id`),
+  ]);
+  return { pros: pros.rows, types: types.rows };
+}
+
+function findPro(lk, value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (Number.isInteger(value)) return lk.pros.find((p) => p.id === value) || null;
+  const v = String(value).trim().toLowerCase();
+  return lk.pros.find((p) => p.name.toLowerCase() === v || (p.code || "").toLowerCase() === v) || null;
+}
+
+function findType(lk, value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (Number.isInteger(value)) return lk.types.find((t) => t.id === value) || null;
+  const v = String(value).trim().toLowerCase();
+  return lk.types.find((t) => t.name.toLowerCase() === v) || null;
+}
+
+function requirePro(lk, value, label) {
+  const pro = findPro(lk, value);
+  if (!pro) throw new PlanningError(`${label}Pro «${value}» nicht gefunden.`);
+  return pro.id;
+}
+
+// --- Lesefreundliche Übersicht ---
+
+async function overview({ from, to, pro } = {}, db = pool) {
+  const lk = await lookups(db);
+  const typeById = new Map(lk.types.map((t) => [t.id, t]));
+  const proById = new Map(lk.pros.map((p) => [p.id, p]));
+  const proFilter = pro ? findPro(lk, pro) : null;
+  if (pro && !proFilter) throw new PlanningError(`Pro «${pro}» nicht gefunden.`);
+
+  const { rows: all } = await db.query(`SELECT ${EVENT_FIELDS} FROM events ORDER BY date, start_min, id`);
+  const planned = new Map();
+  for (const ev of all) {
+    const t = typeById.get(ev.type_id);
+    const sum = planned.get(ev.pro_id) || { brutto: 0, netto: 0 };
+    sum.brutto += minutesOf(ev, t, "brutto");
+    sum.netto += minutesOf(ev, t, "netto");
+    planned.set(ev.pro_id, sum);
+  }
+
+  const inRange = all.filter(
+    (ev) => (!from || ev.date >= from) && (!to || ev.date <= to) && (!proFilter || ev.pro_id === proFilter.id)
+  );
+
+  return {
+    pros: lk.pros.map((p) => {
+      const sum = planned.get(p.id) || { brutto: 0, netto: 0 };
+      return {
+        name: p.name,
+        kuerzel: p.code,
+        sollstunden: p.sollstunden,
+        geplant_brutto_h: Math.round((sum.brutto / 60) * 100) / 100,
+        geplant_netto_h: Math.round((sum.netto / 60) * 100) / 100,
+        auslastung_prozent: p.sollstunden ? Math.round((sum.brutto / 60 / p.sollstunden) * 1000) / 10 : null,
+        freie_tage: p.freie_tage,
+        einsatz: [p.kurse && "Kurse", p.bambinitraining && "Bambini", p.gce_training && "GCE"].filter(Boolean),
+        abwesenheiten: p.abwesenheiten,
+      };
+    }),
+    typen: lk.types.map((t) => ({
+      name: t.name,
+      stunden: t.calc === "pauschal"
+        ? `pro Termin ${t.brutto_fix_min / 60} h brutto, ${t.netto_fix_min / 60} h netto`
+        : `${t.brutto_min}/${t.netto_min} min brutto/netto pro 30 min`,
+      zeit: t.fixed_start_min !== null ? `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}` : "frei",
+      erster_wochentag: t.first_weekday !== null ? eventsData.WEEKDAYS[t.first_weekday] : null,
+      termine_tage_ab_start: t.series_offsets,
+    })),
+    events: inRange.map((ev) => {
+      const t = typeById.get(ev.type_id);
+      return {
+        id: ev.id,
+        datum: ev.date,
+        zeit: `${clock(ev.start_min)}–${clock(ev.end_min)}`,
+        pro: proById.get(ev.pro_id)?.name ?? "?",
+        typ: t?.name ?? "?",
+        serie: ev.series_id ? `${ev.series_index}/${t?.series_offsets.length ?? "?"}` : null,
+        notiz: ev.notiz || null,
+      };
+    }),
+  };
+}
+
+// Kompakte Textform der Übersicht (spart Tokens gegenüber JSON)
+function overviewText(o, { maxEvents = 400, parts = ["pros", "typen", "events"] } = {}) {
+  const lines = [];
+  if (parts.includes("pros")) {
+    lines.push("PROS (Name|Kürzel|Soll h|geplant brutto h|netto h|Auslastung %|frei|Einsatz)");
+    for (const p of o.pros) {
+      lines.push([p.name, p.kuerzel, p.sollstunden, p.geplant_brutto_h, p.geplant_netto_h, p.auslastung_prozent,
+        p.freie_tage.join(",") || "-", p.einsatz.join(",") || "-"].join("|"));
+    }
+  }
+  if (parts.includes("typen")) {
+    lines.push("TYPEN (Name|Stunden|Zeit|erster Wochentag|Termine Tage ab Start)");
+    for (const t of o.typen) {
+      lines.push([t.name, t.stunden, t.zeit, t.erster_wochentag || "-", t.termine_tage_ab_start.join(",")].join("|"));
+    }
+  }
+  if (parts.includes("events")) {
+    lines.push(`EVENTS ${o.events.length} (id|Datum|Zeit|Pro|Typ|Serie|Notiz)`);
+    for (const e of o.events.slice(0, maxEvents)) {
+      lines.push([e.id, e.datum, e.zeit, e.pro, e.typ, e.serie || "-", e.notiz || ""].join("|"));
+    }
+    if (o.events.length > maxEvents) lines.push(`… ${o.events.length - maxEvents} weitere, Zeitraum oder Pro eingrenzen`);
+  }
+  return lines.join("\n");
+}
+
+// --- Sammel-Aktionen ---
+
+// Führt fn in einer Transaktion aus. Probelauf oder Fehler: am Ende ROLLBACK.
+// Nach einem echten Lauf mit Fehlern ist nichts geändert, die Listen sind dann leer.
+async function transaction(dryRun, listKey, fn) {
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const result = await fn(db);
+    await db.query(dryRun || result.errors.length ? "ROLLBACK" : "COMMIT");
+    if (!dryRun && result.errors.length) result[listKey] = [];
+    return result;
+  } catch (err) {
+    await db.query("ROLLBACK");
+    throw err;
+  } finally {
+    db.release();
+  }
+}
+
+// Fehler pro Eintrag sammeln statt beim ersten abzubrechen (Savepoint je Eintrag)
+async function eachItem(db, items, errors, fn) {
+  for (const [i, item] of items.entries()) {
+    await db.query("SAVEPOINT item");
+    try {
+      await fn(item, i);
+      await db.query("RELEASE SAVEPOINT item");
+    } catch (err) {
+      await db.query("ROLLBACK TO SAVEPOINT item");
+      if (!(err instanceof eventsData.ValidationError)) throw err;
+      errors.push({ eintrag: i + 1, fehler: err.message });
+    }
+  }
+}
+
+// items: [{ typ|type_id, pro|pro_id, datum|date, von|start_min, bis|end_min, pros?, notiz? }] – Zeiten als «HH:MM» oder Minuten
+// pros: optional ein Pro pro Termin einer Serie (Name, Kürzel oder ID; leer = wie pro)
+async function bulkCreate(items, { dryRun = false, userId = null } = {}) {
+  if (!Array.isArray(items) || !items.length) throw new PlanningError("Keine Events angegeben.");
+  if (items.length > 200) throw new PlanningError("Höchstens 200 Einträge pro Aufruf.");
+  return transaction(dryRun, "created", async (db) => {
+    const lk = await lookups(db);
+    const created = [];
+    const errors = [];
+    await eachItem(db, items, errors, async (item, i) => {
+      const label = items.length > 1 ? `Eintrag ${i + 1}: ` : "";
+      const type = findType(lk, item.type_id ?? item.typ);
+      if (!type) throw new PlanningError(`${label}Event-Typ «${item.type_id ?? item.typ}» nicht gefunden.`);
+      const pros = Array.isArray(item.pros)
+        ? item.pros.map((p, j) => (p === null || p === undefined || p === "" ? null : requirePro(lk, p, `${label}Termin ${j + 1}: `)))
+        : undefined;
+      const planned = eventsData.planNew(type, {
+        pro_id: requirePro(lk, item.pro_id ?? item.pro, label),
+        pros,
+        date: item.date ?? item.datum,
+        start_min: timeArg(item.start_min ?? item.von),
+        end_min: timeArg(item.end_min ?? item.bis),
+        notiz: item.notiz,
+      });
+      for (const ev of planned) {
+        await assertFree(db, ev, 0, `${label}${planned.length > 1 ? `Termin ${ev.series_index}: ` : ""}`);
+        const { rows } = await db.query(
+          `INSERT INTO events (type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${EVENT_FIELDS}`,
+          [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz, ev.series_id, ev.series_index, userId]
+        );
+        created.push(rows[0]);
+      }
+    });
+    return { created, errors, dryRun };
+  });
+}
+
+// ids: Event-IDs; serie: ganze Serie(n) mitlöschen
+async function bulkDelete(ids, { serie = false, dryRun = false } = {}) {
+  if (!Array.isArray(ids) || !ids.length) throw new PlanningError("Keine Events angegeben.");
+  return transaction(dryRun, "deleted", async (db) => {
+    const clean = ids.map((v) => Number.parseInt(v, 10)).filter(Number.isInteger);
+    const { rows } = await db.query(
+      `DELETE FROM events
+        WHERE id = ANY($1::int[])
+           OR ($2 AND series_id IN (SELECT series_id FROM events WHERE id = ANY($1::int[]) AND series_id IS NOT NULL))
+        RETURNING ${EVENT_FIELDS}`,
+      [clean, serie]
+    );
+    const found = new Set(rows.map((r) => r.id));
+    const errors = clean.filter((id) => !found.has(id)).map((id) => ({ eintrag: id, fehler: `Event ${id} nicht gefunden.` }));
+    return { deleted: rows, errors, dryRun };
+  });
+}
+
+// changes: [{ event_id, pro?, typ?, datum?, von?, bis?, notiz? }] – fehlende Felder bleiben unverändert
+async function bulkUpdate(changes, { dryRun = false } = {}) {
+  if (!Array.isArray(changes) || !changes.length) throw new PlanningError("Keine Änderungen angegeben.");
+  return transaction(dryRun, "updated", async (db) => {
+    const lk = await lookups(db);
+    const updated = [];
+    const errors = [];
+    await eachItem(db, changes, errors, async (c) => {
+      const id = Number.parseInt(c.event_id, 10) || 0;
+      const label = `Event ${id}: `;
+      const { rows } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE id = $1 FOR UPDATE`, [id]);
+      const current = rows[0];
+      if (!current) throw new PlanningError(`${label}nicht gefunden.`);
+      const type = current.series_id ? lk.types.find((t) => t.id === current.type_id) : findType(lk, c.typ ?? current.type_id);
+      if (!type) throw new PlanningError(`${label}Event-Typ «${c.typ}» nicht gefunden.`);
+      const has = (v) => v !== null && v !== undefined && v !== "";
+      const ev = eventsData.planUpdate(current, type, {
+        type_id: type.id,
+        pro_id: has(c.pro) ? requirePro(lk, c.pro, label) : current.pro_id,
+        date: has(c.datum) ? c.datum : current.date,
+        start_min: has(c.von) ? timeArg(c.von) : current.start_min,
+        end_min: has(c.bis) ? timeArg(c.bis) : current.end_min,
+        notiz: c.notiz ?? current.notiz,
+      });
+      await assertFree(db, ev, id, label);
+      const { rows: done } = await db.query(
+        `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
+          WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
+        [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz, id]
+      );
+      updated.push(done[0]);
+    });
+    return { updated, errors, dryRun };
+  });
+}
+
+// Kurzbeschreibung für den Verlauf, z. B. «Platzreife Teil 1 A · 09.01.2027 · Yannick (4 Termine)»
+async function describeEvents(list) {
+  if (!list?.length) return "Event";
+  const first = list[0];
+  const { rows } = await pool.query(
+    "SELECT (SELECT name FROM event_types WHERE id = $1) AS type, (SELECT name FROM pros WHERE id = $2) AS pro",
+    [first.type_id, first.pro_id]
+  );
+  const count = list.length > 1 ? ` (${list.length} Termine)` : "";
+  return `${rows[0].type ?? "Event"} · ${formatDate(first.date)} · ${rows[0].pro ?? "?"}${count}`;
+}
+
+module.exports = {
+  TYPE_FIELDS, EVENT_FIELDS, PlanningError,
+  loadType, assertFree, formatDate, clock, timeArg, minutesOf,
+  overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, describeEvents,
+};

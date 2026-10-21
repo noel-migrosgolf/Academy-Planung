@@ -33,11 +33,31 @@ async function snapshot(db) {
 
 async function record(actor, description, db = pool) {
   const data = await snapshot(db);
-  await db.query("INSERT INTO versions (actor, description, data) VALUES ($1, $2, $3)", [actor, description, data]);
+  const { rows } = await db.query(
+    "INSERT INTO versions (actor, description, data) VALUES ($1, $2, $3) RETURNING id",
+    [actor, description, data]
+  );
   await db.query(
     "DELETE FROM versions WHERE id NOT IN (SELECT id FROM versions ORDER BY id DESC LIMIT $1)",
     [KEEP_VERSIONS]
   );
+  return rows[0].id;
+}
+
+async function latestId(db = pool) {
+  const { rows } = await db.query("SELECT max(id) AS id FROM versions");
+  return rows[0].id;
+}
+
+// Entsprechen die aktuellen Daten genau dem Stand dieser Version?
+async function matchesCurrent(versionId) {
+  const current = await snapshot(pool);
+  const { rows } = await pool.query(
+    `SELECT data->'pros' = $2::jsonb AND data->'event_types' = $3::jsonb AND data->'events' = $4::jsonb AS same
+       FROM versions WHERE id = $1`,
+    [versionId, JSON.stringify(current.pros), JSON.stringify(current.event_types), JSON.stringify(current.events)]
+  );
+  return rows[0]?.same === true;
 }
 
 async function list() {
@@ -79,9 +99,9 @@ async function restore(versionId, actor) {
       );
     }
     const when = new Date(rows[0].created_at).toLocaleString("de-CH", { timeZone: "Europe/Zurich" });
-    await record(actor, `Version #${versionId} wiederhergestellt (Stand ${when})`, db);
+    const newId = await record(actor, `Version #${versionId} wiederhergestellt (Stand ${when})`, db);
     await db.query("COMMIT");
-    return true;
+    return newId;
   } catch (err) {
     await db.query("ROLLBACK");
     throw err;
@@ -91,7 +111,7 @@ async function restore(versionId, actor) {
 }
 
 // Middleware: speichert nach einer erfolgreichen Antwort eine Version.
-// describe(req, body) liefert die Beschreibung (darf async sein).
+// describe(req, body) liefert die Beschreibung (darf async sein); null = keine Version (z. B. Probelauf).
 function versioned(describe) {
   return (req, res, next) => {
     const json = res.json.bind(res);
@@ -99,7 +119,8 @@ function versioned(describe) {
       if (res.statusCode < 300) {
         res.once("finish", async () => {
           try {
-            await record(req.session?.name || "Unbekannt", await describe(req, body));
+            const description = await describe(req, body);
+            if (description !== null) await record(req.session?.name || "Unbekannt", description);
           } catch (err) {
             console.error("Version konnte nicht gespeichert werden:", err);
           }
@@ -111,4 +132,4 @@ function versioned(describe) {
   };
 }
 
-module.exports = { migrate, record, list, restore, versioned };
+module.exports = { migrate, record, latestId, matchesCurrent, list, restore, versioned };

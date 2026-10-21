@@ -4,9 +4,9 @@ Planungstool für die AI Academy Golf im Golfpark Holzhäusern.
 
 ## Aufbau
 
-- `server/` – Node.js/Express-Server mit API (Login, Benutzer, Pros, Events, Verlauf)
+- `server/` – Node.js/Express-Server mit API (Login, Benutzer, Pros, Events, Verlauf, KI)
 - `public/` – Oberfläche (HTML/CSS/JS), Logo und Favicons unter `public/img/`
-- PostgreSQL-Datenbank mit den Tabellen `users`, `sessions`, `pros`, `event_types`, `events` und `versions`; das Schema wird beim Start automatisch angelegt bzw. ergänzt.
+- PostgreSQL-Datenbank mit den Tabellen `users`, `sessions`, `pros`, `event_types`, `events`, `versions`, `ai_chats` und `settings`; das Schema wird beim Start automatisch angelegt bzw. ergänzt.
 
 ## Lokal starten
 
@@ -29,6 +29,10 @@ Dann <http://localhost:3000> öffnen.
 | `DATABASE_SSL` | `true`, wenn die Datenbank SSL verlangt (z. B. externe Render-URL) |
 | `EXPORT_TOKEN` | Optional: Schlüssel für den Lesezugriff auf `GET /api/export` ohne Anmeldung (Header `X-Export-Token`) |
 | `API_TOKEN` | Optional: Schlüssel für die Datenpflege über die API (Header `X-Api-Token`). Darf Pros, Event-Typen, Events und den Verlauf bearbeiten, aber keine Benutzerkonten. Löschen der Variable sperrt den Zugang sofort. |
+| `ANTHROPIC_API_KEY` | Schlüssel für den KI-Assistenten (console.anthropic.com). Ohne ihn ist der Reiter KI sichtbar, aber gesperrt. |
+| `AI_MODEL` | Optional: Modell der KI, Standard `claude-opus-5-5` (günstiger: `claude-sonnet-5-5`) |
+| `AI_EFFORT` | Optional: Denkaufwand `low` (Standard, spart Tokens), `medium` oder `high` |
+| `AI_FALLBACKS` | Optional: `off` schaltet das Ausweichmodell bei abgelehnten Anfragen aus |
 | `NODE_ENV` | `production` auf dem Server (sichere Cookies) |
 
 ## Deployment auf Render
@@ -46,3 +50,10 @@ Build Command `npm ci` und Start Command `npm start`.
 - **Benutzer** (nur Admin): Benutzer anlegen und löschen, Admin-Rechte pro Benutzer vergeben oder entziehen (wirkt sofort).
 - **Verlauf** (nur Admin, `server/history.js`): Nach jeder Änderung an Pros, Event-Typen oder Events wird der ganze Datenstand als Version gespeichert (mit Zeit, wer, was). «Wiederherstellen» setzt die Daten auf eine Version zurück und ist selbst wieder eine Version. Benutzerkonten sind ausgenommen. Es werden die letzten 1000 Versionen behalten.
 - **Export** (nur lesend): `GET /api/export` liefert Benutzer (ohne Passwörter), Pros, Event-Typen und Events als JSON. Admins nutzen den Button «Daten exportieren» auf der Benutzer-Seite; ohne Anmeldung nur mit Header `X-Export-Token`.
+- **KI** (`server/ai.js`, `public/js/ai.js`): Chat mit Claude, der die Daten lesen und Events anlegen, ändern und löschen kann. Jede Änderung der KI wird als Version gespeichert und erscheint im Chat mit «Rückgängig» (setzt auf den Stand vor der Änderung zurück; wurde seither weiter geplant, dürfen das nur Admins). Admins pflegen unter «Regeln für die KI» die Planungsregeln; sie gelten für neu gestartete Chats. Tokensparend: knapper System-Prompt, Prompt-Caching, Werkzeuge mit kompakten Textzeilen statt JSON, Sammel-Aktionen, Denkaufwand `low`; bei langen Chats empfiehlt die Seite einen neuen Chat.
+- **API für Planung** (mit Anmeldung oder `X-Api-Token`):
+  - `GET /api/overview?from=YYYY-MM-DD&to=YYYY-MM-DD&pro=Name&format=text` – lesefreundliche Übersicht: Namen statt IDs, Zeiten als HH:MM, Stunden und Auslastung je Pro.
+  - `POST /api/events/bulk` `{ events: [{ typ, pro, datum, von, bis, pros?, notiz? }], dry_run? }` – mehrere Events (auch Serien) in einem Aufruf.
+  - `POST /api/events/bulk-update` `{ changes: [{ event_id, pro?, typ?, datum?, von?, bis?, notiz? }], dry_run? }`
+  - `POST /api/events/bulk-delete` `{ ids: [...], serie?, dry_run? }`
+  - Pros per Name oder Kürzel, Typen per Name, Zeiten als `HH:MM`. Jeder Aufruf gilt ganz oder gar nicht (bei Fehlern 409 und nichts geändert) und ergibt genau eine Version im Verlauf. `dry_run: true` prüft nur.

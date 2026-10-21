@@ -16,6 +16,7 @@
     ferien: $("#page-ferien"),
     users: $("#page-users"),
     history: $("#page-history"),
+    ki: $("#page-ki"),
   };
 
   let session = null;
@@ -39,6 +40,11 @@
     toast,
     reload: () => loadData(),
   });
+  KiPage.init({
+    api,
+    toast,
+    reload: () => loadData(),
+  });
 
   async function api(path, { method = "GET", body } = {}) {
     const res = await fetch(`/api${path}`, {
@@ -48,7 +54,7 @@
       credentials: "same-origin",
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "Unbekannter Fehler.");
+    if (!res.ok) throw Object.assign(new Error(data.error || "Unbekannter Fehler."), { status: res.status, data });
     return data;
   }
 
@@ -112,6 +118,7 @@
     }
     if (name === "users") loadUsers();
     if (name === "history") HistoryPage.load();
+    if (name === "ki") KiPage.show();
   }
 
   function render() {
