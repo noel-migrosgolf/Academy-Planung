@@ -1,4 +1,4 @@
-const { Pool } = require("pg");
+const { Pool, types } = require("pg");
 const pros = require("./pros");
 const events = require("./events");
 
@@ -6,6 +6,9 @@ if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL ist nicht gesetzt.");
   process.exit(1);
 }
+
+// Datumsspalten (DATE) als «YYYY-MM-DD» lesen, nicht als Date-Objekt in lokaler Zeitzone.
+types.setTypeParser(1082, (value) => value);
 
 // Render: interne Datenbank-URL braucht kein SSL, die externe schon.
 const pool = new Pool({
@@ -104,6 +107,9 @@ async function migrate() {
   await pool.query(`
     ALTER TABLE event_types
       ADD COLUMN IF NOT EXISTS einsatzbereich  TEXT,
+      ADD COLUMN IF NOT EXISTS einplanbar_von  DATE,
+      ADD COLUMN IF NOT EXISTS einplanbar_bis  DATE,
+      ADD COLUMN IF NOT EXISTS max_anzahl      INTEGER,
       ADD COLUMN IF NOT EXISTS calc            TEXT NOT NULL DEFAULT 'faktor',
       ADD COLUMN IF NOT EXISTS brutto_fix_min  INTEGER,
       ADD COLUMN IF NOT EXISTS netto_fix_min   INTEGER,

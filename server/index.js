@@ -204,11 +204,11 @@ api.post("/event-types", auth.requireDataAdmin, (req, res) =>
 api.put("/event-types/:id", auth.requireDataAdmin, (req, res) =>
   saveType(res, async () => {
     const typeId = Number.parseInt(req.params.id, 10) || 0;
-    // Fehlt der Einsatzbereich in der Anfrage (z. B. ältere Seite im Browser-Cache), bleibt er unverändert.
+    // Fehlen neuere Felder in der Anfrage (z. B. ältere Seite im Browser-Cache), bleiben sie unverändert.
     const body = { ...req.body };
-    if (!("einsatzbereich" in body)) {
-      const { rows } = await pool.query("SELECT einsatzbereich FROM event_types WHERE id = $1", [typeId]);
-      body.einsatzbereich = rows[0]?.einsatzbereich ?? null;
+    const { rows: old } = await pool.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [typeId]);
+    for (const key of ["einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_anzahl"]) {
+      if (!(key in body)) body[key] = old[0]?.[key] ?? null;
     }
     const t = eventsData.normalizeType(body);
     const cols = eventsData.TYPE_COLUMNS;
@@ -271,6 +271,7 @@ api.post("/events", auth.requireLogin, versioned(async (req, b) => `Geplant: ${a
     const type = await loadType(db, eventsData.id(req.body.type_id, "Event-Typ"));
     const planned = eventsData.planNew(type, req.body);
     await planning.assertArea(db, type, planned.map((ev) => ev.pro_id));
+    await planning.assertCapacity(db, type);
     const created = [];
     for (const ev of planned) {
       await assertFree(db, ev, 0, planned.length > 1 ? `Termin ${ev.series_index}: ` : "");
@@ -294,6 +295,7 @@ api.put("/events/:id", auth.requireLogin, versioned(async (req, b) => `Geändert
     const type = await loadType(db, typeId);
     const ev = eventsData.planUpdate(rows[0], type, req.body);
     await planning.assertArea(db, type, [ev.pro_id]);
+    if (type.id !== rows[0].type_id) await planning.assertCapacity(db, type);
     await assertFree(db, ev, eventId, "");
     const { rows: updated } = await db.query(
       `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6

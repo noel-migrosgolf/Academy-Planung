@@ -11,6 +11,8 @@
 //   first_weekday                 – erster Termin nur an diesem Wochentag (0 = Mo … 6 = So)
 //   series_offsets                – Serie: Tage nach dem ersten Termin, z. B. [0, 1, 7, 8]
 //                                   = Sa, darauf folgender So, nächster Sa, nächster So
+//   einplanbar_von/einplanbar_bis – alle Termine müssen in diesem Zeitraum liegen
+//   max_anzahl                    – höchstens so viele Durchführungen (eine Serie zählt einmal), über alle Pros
 //   series_times                  – Serie: eigene Zeit je Termin, z. B. [[840, 990], [600, 750], [840, 990]]
 //                                   (dann sind auch mehrere Termine am selben Tag möglich)
 
@@ -48,7 +50,7 @@ const AREAS = {
 };
 
 const TYPE_COLUMNS = [
-  "code", "einsatzbereich", "name", "color", "calc", "brutto_min", "netto_min", "brutto_fix_min", "netto_fix_min",
+  "code", "einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_anzahl", "name", "color", "calc", "brutto_min", "netto_min", "brutto_fix_min", "netto_fix_min",
   "fixed_start_min", "fixed_end_min", "first_weekday", "series_offsets", "series_times",
 ];
 
@@ -89,7 +91,13 @@ function normalizeType(body) {
   const calc = body.calc === "pauschal" ? "pauschal" : "faktor";
   const einsatzbereich = empty(body.einsatzbereich) ? null : String(body.einsatzbereich);
   if (einsatzbereich && !AREAS[einsatzbereich]) throw new ValidationError("Unbekannter Einsatzbereich.");
-  const t = { code, einsatzbereich, name, color, calc, brutto_min: 30, netto_min: 30, brutto_fix_min: null, netto_fix_min: null };
+  const einplanbar_von = empty(body.einplanbar_von) ? null : isoDate(body.einplanbar_von, "Einplanbar von");
+  const einplanbar_bis = empty(body.einplanbar_bis) ? null : isoDate(body.einplanbar_bis, "Einplanbar bis");
+  if (einplanbar_von && einplanbar_bis && einplanbar_bis < einplanbar_von) {
+    throw new ValidationError("Einplanbar: «bis» liegt vor «von».");
+  }
+  const max_anzahl = empty(body.max_anzahl) ? null : int(body.max_anzahl, "Maximale Anzahl", 1, 10000);
+  const t = { code, einsatzbereich, einplanbar_von, einplanbar_bis, max_anzahl, name, color, calc, brutto_min: 30, netto_min: 30, brutto_fix_min: null, netto_fix_min: null };
   if (calc === "faktor") {
     t.brutto_min = int(body.brutto_min, "Brutto (Minuten pro 30 min)", 0, 30);
     t.netto_min = int(body.netto_min, "Netto (Minuten pro 30 min)", 0, 30);
@@ -166,12 +174,27 @@ function weekdayOf(iso) {
   return (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7; // Mo = 0
 }
 
-function isoDate(value) {
+function isoDate(value, label) {
   const date = String(value || "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
-    throw new ValidationError("Bitte ein gültiges Datum angeben.");
+    throw new ValidationError(label ? `${label}: bitte ein gültiges Datum angeben.` : "Bitte ein gültiges Datum angeben.");
   }
   return date;
+}
+
+function formatDate(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+// Liegen alle Daten im einplanbaren Zeitraum des Typs?
+function assertWindow(type, dates) {
+  const from = type.einplanbar_von;
+  const to = type.einplanbar_bis;
+  if (dates.some((d) => (from && d < from) || (to && d > to))) {
+    const range = from && to ? `vom ${formatDate(from)} bis ${formatDate(to)}` : from ? `ab ${formatDate(from)}` : `bis ${formatDate(to)}`;
+    throw new ValidationError(`«${type.name}» kann nur ${range} eingeplant werden.`);
+  }
 }
 
 function id(value, label) {
@@ -226,6 +249,7 @@ function planNew(type, body) {
   const seriesId = offsets.length > 1 ? crypto.randomUUID() : null;
   const notiz = String(body.notiz || "").trim().slice(0, 500);
 
+  assertWindow(type, offsets.map((offset) => addDays(date, offset)));
   return offsets.map((offset, i) => ({
     type_id: type.id,
     pro_id: id(empty(pros[i]) ? fallback : pros[i], offsets.length > 1 ? `Pro für Termin ${i + 1}` : "Pro"),
@@ -251,10 +275,11 @@ function planUpdate(existing, type, body) {
   if (type.first_weekday !== null && weekdayOf(date) !== type.first_weekday) {
     throw new ValidationError(`«${type.name}» findet nur an einem ${WEEKDAYS[type.first_weekday]} statt.`);
   }
+  assertWindow(type, [date]);
   return { ...existing, type_id: type.id, pro_id: id(body.pro_id, "Pro"), date, ...times(type, body), notiz };
 }
 
 module.exports = {
   SEED_TYPES, SEED_SERIES_TYPES, TYPE_COLUMNS, WEEKDAYS, AREAS, ValidationError,
-  normalizeType, typeValues, planNew, planUpdate, id, addDays, weekdayOf, SYNC_FIXED_EVENTS_SQL,
+  normalizeType, typeValues, planNew, planUpdate, id, addDays, weekdayOf, assertWindow, SYNC_FIXED_EVENTS_SQL,
 };

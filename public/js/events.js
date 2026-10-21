@@ -113,6 +113,17 @@
     gce: { label: "GCE", field: "gce_training" },
   };
 
+  // Durchführungen eines Typs (eine Serie zählt einmal)
+  function usageOf(t) {
+    return new Set(data.events.filter((e) => e.type_id === t.id).map((e) => e.series_id || `e${e.id}`)).size;
+  }
+
+  function windowText(t) {
+    const day = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.` : "…");
+    const range = t.einplanbar_von || t.einplanbar_bis ? `${day(t.einplanbar_von)}–${day(t.einplanbar_bis)}` : "ganzes Jahr";
+    return t.max_anzahl ? `${range} · ${usageOf(t)}/${t.max_anzahl}` : range;
+  }
+
   function allowedPros(t) {
     const area = AREAS[t?.einsatzbereich];
     return area ? data.pros.filter((p) => p[area.field]) : data.pros;
@@ -222,6 +233,8 @@
     hint.textContent = !pros.length
       ? `Kein Pro ist im Einsatzbereich ${area?.label} eingetragen.`
       : `«${proName(current)}» ist nicht im Einsatzbereich ${area?.label}; bitte einen passenden Pro wählen.`;
+    f.date.min = t.einplanbar_von || "";
+    f.date.max = t.einplanbar_bis || "";
     const fixed = t.fixed_start_min !== null;
     if (fixed) {
       f.start.value = clock(t.fixed_start_min);
@@ -375,6 +388,9 @@
     f.name.value = type?.name || "";
     f.code.value = type?.code || "";
     f.einsatzbereich.value = type ? type.einsatzbereich || "" : "kurse";
+    f.einplanbar_von.value = type?.einplanbar_von || "";
+    f.einplanbar_bis.value = type?.einplanbar_bis || "";
+    f.max_anzahl.value = type?.max_anzahl ?? "";
     f.color.value = type?.color || "#6a8fd8";
     f.calc.value = type?.calc || "faktor";
     f.brutto_min.value = type?.brutto_min ?? 30;
@@ -399,6 +415,9 @@
       name: f.name.value,
       code: f.code.value,
       einsatzbereich: f.einsatzbereich.value || null,
+      einplanbar_von: f.einplanbar_von.value || null,
+      einplanbar_bis: f.einplanbar_bis.value || null,
+      max_anzahl: f.max_anzahl.value === "" ? null : Number(f.max_anzahl.value),
       color: f.color.value,
       calc: f.calc.value,
       brutto_min: Number(f.brutto_min.value),
@@ -481,7 +500,7 @@
         ? "frei wählbar"
         : `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}${booked > t.fixed_end_min ? `, Puffer bis ${clock(booked)}` : ""}`;
       const terms = isSeriesType(t) ? `${t.series_offsets.length} (${patternText(t)})` : t.first_weekday !== null ? `1 (${D.WEEKDAYS[t.first_weekday]})` : "1";
-      tr.append(el("td", "tab muted", t.code || "–"), name, el("td", "", AREAS[t.einsatzbereich]?.label ?? "alle"), el("td", "muted", hoursText(t)), el("td", "tab", time), el("td", "", terms));
+      tr.append(el("td", "tab muted", t.code || "–"), name, el("td", "", AREAS[t.einsatzbereich]?.label ?? "alle"), el("td", "tab muted", windowText(t)), el("td", "muted", hoursText(t)), el("td", "tab", time), el("td", "", terms));
       const actions = el("td");
       if (ctx.isAdmin()) {
         const btn = el("button", "btn sm", "Bearbeiten");
