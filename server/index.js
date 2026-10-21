@@ -4,6 +4,8 @@ const { pool, migrate } = require("./db");
 const auth = require("./auth");
 const prosData = require("./pros");
 const eventsData = require("./events");
+const history = require("./history");
+const { versioned } = history;
 
 const app = express();
 app.set("trust proxy", 1); // Render sitzt vor der App
@@ -128,7 +130,7 @@ async function savePro(res, run) {
   }
 }
 
-api.post("/pros", auth.requireAdmin, (req, res) =>
+api.post("/pros", auth.requireDataAdmin, versioned((req, b) => `Pro «${b.pro.name}» angelegt`), (req, res) =>
   savePro(res, () => {
     const pro = prosData.normalize(req.body);
     const params = prosData.COLUMNS.map((_, i) => `$${i + 1}`).join(", ");
@@ -141,7 +143,7 @@ api.post("/pros", auth.requireAdmin, (req, res) =>
   })
 );
 
-api.put("/pros/:id", auth.requireAdmin, (req, res) =>
+api.put("/pros/:id", auth.requireDataAdmin, versioned((req, b) => `Pro «${b.pro.name}» geändert`), (req, res) =>
   savePro(res, () => {
     const pro = prosData.normalize(req.body);
     const sets = prosData.COLUMNS.map((c, i) => `${c} = $${i + 1}`).join(", ");
@@ -152,9 +154,10 @@ api.put("/pros/:id", auth.requireAdmin, (req, res) =>
   })
 );
 
-api.delete("/pros/:id", auth.requireAdmin, async (req, res) => {
-  await pool.query("DELETE FROM pros WHERE id = $1", [Number.parseInt(req.params.id, 10) || 0]);
-  res.json({ ok: true });
+api.delete("/pros/:id", auth.requireDataAdmin, versioned((req, b) => `Pro «${b.pro?.name ?? "?"}» gelöscht`), async (req, res) => {
+  const { rows } = await pool.query("DELETE FROM pros WHERE id = $1 RETURNING id, name", [Number.parseInt(req.params.id, 10) || 0]);
+  if (!rows[0]) return res.status(404).json({ error: "Pro nicht gefunden." });
+  res.json({ ok: true, pro: rows[0] });
 });
 
 // --- Event-Typen (Vorlagen, nur Admins bearbeiten) ---
@@ -183,7 +186,7 @@ async function saveType(res, run) {
   }
 }
 
-api.post("/event-types", auth.requireAdmin, (req, res) =>
+api.post("/event-types", auth.requireDataAdmin, versioned((req, b) => `Event-Typ «${b.type.name}» angelegt`), (req, res) =>
   saveType(res, () => {
     const t = eventsData.normalizeType(req.body);
     const cols = eventsData.TYPE_COLUMNS;
@@ -196,7 +199,7 @@ api.post("/event-types", auth.requireAdmin, (req, res) =>
   })
 );
 
-api.put("/event-types/:id", auth.requireAdmin, (req, res) =>
+api.put("/event-types/:id", auth.requireDataAdmin, versioned((req, b) => `Event-Typ «${b.type.name}» geändert`), (req, res) =>
   saveType(res, async () => {
     const t = eventsData.normalizeType(req.body);
     const cols = eventsData.TYPE_COLUMNS;
@@ -212,10 +215,11 @@ api.put("/event-types/:id", auth.requireAdmin, (req, res) =>
   })
 );
 
-api.delete("/event-types/:id", auth.requireAdmin, async (req, res) => {
+api.delete("/event-types/:id", auth.requireDataAdmin, versioned((req, b) => `Event-Typ «${b.type?.name ?? "?"}» gelöscht`), async (req, res) => {
   try {
-    await pool.query("DELETE FROM event_types WHERE id = $1", [Number.parseInt(req.params.id, 10) || 0]);
-    res.json({ ok: true });
+    const { rows } = await pool.query("DELETE FROM event_types WHERE id = $1 RETURNING id, name", [Number.parseInt(req.params.id, 10) || 0]);
+    if (!rows[0]) return res.status(404).json({ error: "Event-Typ nicht gefunden." });
+    res.json({ ok: true, type: rows[0] });
   } catch (err) {
     if (err.code === "23503") {
       return res.status(409).json({ error: "Dieser Typ wird noch von geplanten Events verwendet und kann nicht gelöscht werden." });
@@ -276,7 +280,19 @@ async function assertFree(db, ev, ignoreId, label) {
   }
 }
 
-api.post("/events", auth.requireLogin, (req, res) =>
+// Kurzbeschreibung für den Verlauf, z. B. «Platzreife Teil 1 A · 09.01.2027 · Yannick (4 Termine)»
+async function describeEvents(list) {
+  if (!list?.length) return "Event";
+  const first = list[0];
+  const { rows } = await pool.query(
+    "SELECT (SELECT name FROM event_types WHERE id = $1) AS type, (SELECT name FROM pros WHERE id = $2) AS pro",
+    [first.type_id, first.pro_id]
+  );
+  const count = list.length > 1 ? ` (${list.length} Termine)` : "";
+  return `${rows[0].type ?? "Event"} · ${formatDate(first.date)} · ${rows[0].pro ?? "?"}${count}`;
+}
+
+api.post("/events", auth.requireLogin, versioned(async (req, b) => `Geplant: ${await describeEvents(b.events)}`), (req, res) =>
   inTransaction(res, async (db) => {
     const type = await loadType(db, eventsData.id(req.body.type_id, "Event-Typ"));
     const planned = eventsData.planNew(type, req.body);
@@ -294,7 +310,7 @@ api.post("/events", auth.requireLogin, (req, res) =>
   })
 );
 
-api.put("/events/:id", auth.requireLogin, (req, res) =>
+api.put("/events/:id", auth.requireLogin, versioned(async (req, b) => `Geändert: ${await describeEvents([b.event])}`), (req, res) =>
   inTransaction(res, async (db) => {
     const eventId = Number.parseInt(req.params.id, 10) || 0;
     const { rows } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE id = $1 FOR UPDATE`, [eventId]);
@@ -312,7 +328,7 @@ api.put("/events/:id", auth.requireLogin, (req, res) =>
 );
 
 // ?serie=1 löscht alle Termine der Serie
-api.delete("/events/:id", auth.requireLogin, async (req, res) => {
+api.delete("/events/:id", auth.requireLogin, versioned(async (req, b) => `Gelöscht: ${await describeEvents(b.deleted)}`), async (req, res) => {
   const eventId = Number.parseInt(req.params.id, 10) || 0;
   const { rows } = req.query.serie
     ? await pool.query(
@@ -344,6 +360,18 @@ api.get("/export", limitExport, auth.requireAdminOrExportToken, async (req, res)
   });
 });
 
+// --- Versionsverlauf (Pros, Event-Typen, Events) ---
+
+api.get("/versions", auth.requireDataAdmin, async (req, res) => {
+  res.json({ versions: await history.list() });
+});
+
+api.post("/versions/:id/restore", auth.requireDataAdmin, async (req, res) => {
+  const ok = await history.restore(Number.parseInt(req.params.id, 10) || 0, req.session.name);
+  if (!ok) return res.status(404).json({ error: "Version nicht gefunden." });
+  res.json({ ok: true });
+});
+
 app.use("/api", api);
 app.use("/api", (req, res) => res.status(404).json({ error: "Nicht gefunden." }));
 app.use(express.static(path.join(__dirname, "..", "public")));
@@ -356,6 +384,7 @@ app.use((err, req, res, next) => {
 const port = process.env.PORT || 3000;
 
 migrate()
+  .then(() => history.migrate())
   .then(() => app.listen(port, () => console.log(`Academy Planung läuft auf Port ${port}`)))
   .catch((err) => {
     console.error("Datenbank-Migration fehlgeschlagen:", err);

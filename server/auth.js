@@ -26,18 +26,21 @@ function verifyAdminPassword(password) {
   return crypto.timingSafeEqual(a, b);
 }
 
-// Export-Zugang ohne Anmeldung: Header «X-Export-Token» muss EXPORT_TOKEN entsprechen.
-function verifyExportToken(token) {
-  const expected = process.env.EXPORT_TOKEN;
+function tokenMatches(token, expected) {
   if (!expected || !token) return false;
   const a = crypto.createHash("sha256").update(String(token)).digest();
   const b = crypto.createHash("sha256").update(expected).digest();
   return crypto.timingSafeEqual(a, b);
 }
 
-// Admins (angemeldet) oder ein gültiger Export-Token
+// Export-Zugang ohne Anmeldung: Header «X-Export-Token» muss EXPORT_TOKEN entsprechen.
+function verifyExportToken(token) {
+  return tokenMatches(token, process.env.EXPORT_TOKEN);
+}
+
+// Admins (angemeldet), der API-Schlüssel oder ein gültiger Export-Token
 function requireAdminOrExportToken(req, res, next) {
-  if (req.session?.role === "admin" || verifyExportToken(req.get("x-export-token"))) return next();
+  if (["admin", "api"].includes(req.session?.role) || verifyExportToken(req.get("x-export-token"))) return next();
   res.status(403).json({ error: "Keine Berechtigung." });
 }
 
@@ -82,6 +85,12 @@ async function destroySession(req, res) {
 // Hängt die aktuelle Sitzung als req.session an (oder null).
 async function loadSession(req, res, next) {
   req.session = null;
+  // Datenpflege über die API (Header «X-Api-Token» = API_TOKEN): eigene Rolle «api»,
+  // darf Pros, Event-Typen, Events und den Verlauf bearbeiten, aber keine Benutzerkonten.
+  if (tokenMatches(req.get("x-api-token"), process.env.API_TOKEN)) {
+    req.session = { role: "api", name: "Claude (API)", username: "api" };
+    return next();
+  }
   const token = readCookie(req, COOKIE_NAME);
   if (!token) return next();
   try {
@@ -115,6 +124,12 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// Admins oder der API-Schlüssel – nur für Daten (Pros, Event-Typen, Events, Verlauf)
+function requireDataAdmin(req, res, next) {
+  if (!["admin", "api"].includes(req.session?.role)) return res.status(403).json({ error: "Keine Berechtigung." });
+  next();
+}
+
 // Einfache Begrenzung der Login-Versuche pro IP (im Speicher).
 function loginRateLimit({ max = 10, windowMs = 15 * 60 * 1000 } = {}) {
   const attempts = new Map();
@@ -141,6 +156,7 @@ module.exports = {
   loadSession,
   requireLogin,
   requireAdmin,
+  requireDataAdmin,
   requireAdminOrExportToken,
   loginRateLimit,
 };

@@ -15,6 +15,7 @@
     pros: $("#page-pros"),
     ferien: $("#page-ferien"),
     users: $("#page-users"),
+    history: $("#page-history"),
   };
 
   let session = null;
@@ -32,6 +33,11 @@
     toast,
     reload: () => loadData(),
     isAdmin: () => session?.role === "admin",
+  });
+  HistoryPage.init({
+    api,
+    toast,
+    reload: () => loadData(),
   });
 
   async function api(path, { method = "GET", body } = {}) {
@@ -93,7 +99,7 @@
   );
 
   function showPage(name) {
-    if (name === "users" && session?.role !== "admin") name = "calendar";
+    if ((name === "users" || name === "history") && session?.role !== "admin") name = "calendar";
     currentPage = name;
     for (const [key, el] of Object.entries(pages)) el.hidden = key !== name;
     $$(".nav button[data-page]").forEach((b) => b.classList.toggle("on", b.dataset.page === name));
@@ -105,6 +111,7 @@
       HolidayCalendar.render($("#calendar"), $("#legend"), YEAR, window.FERIEN_ZUG);
     }
     if (name === "users") loadUsers();
+    if (name === "history") HistoryPage.load();
   }
 
   function render() {
