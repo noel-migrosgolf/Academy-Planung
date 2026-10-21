@@ -127,8 +127,8 @@
       else box.append(el("div", `ki-line ${item.type}`, item.text));
     });
 
-    if (pendingText) {
-      box.append(el("div", "ki-msg user", pendingText));
+    if (pendingText) box.append(el("div", "ki-msg user", pendingText));
+    if (pendingText || chat?.running) {
       const think = el("div", "ki-thinking");
       think.append(sparkle(), el("span", "ai-text shimmer", "denkt nach …"));
       box.append(think);
@@ -171,9 +171,44 @@
     renderMessages(pendingText);
     renderFoot();
     const ready = status?.configured;
+    const working = sending || !!chat?.running;
     $("#ki-missing").hidden = !status || ready;
-    $("#ki-input").disabled = !ready || sending;
-    $("#ki-send").disabled = !ready || sending;
+    $("#ki-input").disabled = !ready || working;
+    $("#ki-send").disabled = !ready || working;
+  }
+
+  const changeCount = (c) => (c?.items || []).filter((i) => i.type === "change").length;
+
+  // Solange die KI arbeitet: Fortschritt abfragen und anzeigen; bei neuen Änderungen Daten neu laden.
+  let polling = null;
+  function poll() {
+    if (!chat?.running || polling === chat.id) return;
+    const id = chat.id;
+    polling = id;
+    let changes = changeCount(chat);
+    let shown = `${chat.items.length}|${chat.running}`;
+    const tick = async () => {
+      if (chat?.id !== id) return (polling = null);
+      try {
+        const { chat: next } = await ctx.api(`/ai/chats/${id}`);
+        if (chat?.id !== id) return (polling = null);
+        chat = next;
+      } catch {}
+      if (changeCount(chat) !== changes) {
+        changes = changeCount(chat);
+        ctx.reload();
+      }
+      const now = `${chat.items.length}|${chat.running}`;
+      if (now !== shown) {
+        shown = now;
+        render();
+      }
+      if (chat.running) return setTimeout(tick, 1500);
+      polling = null;
+      loadChats().then(renderChats).catch(() => {});
+      $("#ki-input").focus();
+    };
+    setTimeout(tick, 1500);
   }
 
   async function loadChats() {
@@ -188,6 +223,7 @@
       chat = null;
     }
     render();
+    poll();
   }
 
   async function newChat() {
@@ -230,9 +266,7 @@
     autosize();
     render(text);
     try {
-      const res = await ctx.api(`/ai/chats/${chat.id}/messages`, { method: "POST", body: { text } });
-      chat = res.chat;
-      if (res.changed) ctx.reload();
+      ({ chat } = await ctx.api(`/ai/chats/${chat.id}/messages`, { method: "POST", body: { text } }));
       await loadChats();
     } catch (err) {
       ctx.toast(err.message);
@@ -240,7 +274,8 @@
     } finally {
       sending = false;
       render();
-      input.focus();
+      poll();
+      if (!chat?.running) input.focus();
     }
   }
 
@@ -291,6 +326,7 @@
       ? "Gelten für neu gestartete Chats."
       : "Nur Admins können die Regeln bearbeiten.";
     render();
+    poll();
   }
 
   function init(context) {

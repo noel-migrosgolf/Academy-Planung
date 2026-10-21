@@ -303,6 +303,121 @@ async function bulkUpdate(changes, { dryRun = false } = {}) {
   });
 }
 
+// --- Automatisch auslasten ---
+
+// Reihenfolge, die einen Zeitraum gleichmässig abdeckt (statt von vorne aufzufüllen):
+// Index i an Position frac(i · goldener Schnitt).
+function spreadOrder(n) {
+  const phi = (Math.sqrt(5) - 1) / 2;
+  return [...Array(n).keys()].sort((a, b) => ((a * phi) % 1) - ((b * phi) % 1));
+}
+
+const WEEKDAY_INDEX = Object.fromEntries(eventsData.WEEKDAYS.map((d, i) => [d.toLowerCase(), i]));
+
+// Plant für jeden Pro Serien der gewählten Typen, bis die Ziel-Auslastung (brutto in % der Sollstunden,
+// gezählt wie in der Übersicht über alle Events) erreicht ist. Die Serien werden gleichmässig über den
+// Zeitraum verteilt; es gelten nur die Regeln des Tools (keine Überschneidung, Wochentag, feste Zeit),
+// auf Wunsch zusätzlich die freien Wochentage der Pros. Ganz oder gar nicht, eine Transaktion.
+async function autoFill({ pros, ziel_prozent, typen, von, bis, freie_tage_beachten = false } = {}, { dryRun = false, userId = null } = {}) {
+  const goalPercent = Number(ziel_prozent);
+  if (!(goalPercent > 0 && goalPercent <= 200)) throw new PlanningError("Ziel-Auslastung: bitte eine Zahl zwischen 1 und 200 (%).");
+  const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
+  const from = isDate(von) ? von : "2027-01-01";
+  const to = isDate(bis) ? bis : "2027-12-31";
+  if (to < from) throw new PlanningError("Zeitraum: «bis» liegt vor «von».");
+
+  return transaction(dryRun, "created", async (db) => {
+    const lk = await lookups(db);
+    const proList = pros?.length
+      ? pros.map((p) => findPro(lk, p) || (() => { throw new PlanningError(`Pro «${p}» nicht gefunden.`); })())
+      : lk.pros.filter((p) => p.sollstunden > 0);
+    const types = typen?.length
+      ? typen.map((t) => findType(lk, t) || (() => { throw new PlanningError(`Event-Typ «${t}» nicht gefunden.`); })())
+      : lk.types.filter((t) => t.fixed_start_min !== null);
+    for (const t of types) {
+      if (t.fixed_start_min === null) throw new PlanningError(`«${t.name}» hat keine feste Zeit und lässt sich nicht automatisch verteilen.`);
+    }
+    if (!types.length) throw new PlanningError("Keine Event-Typen mit fester Zeit vorhanden.");
+
+    // Mögliche Starttage je Typ im Zeitraum (ganze Serie muss hineinpassen)
+    const candidates = [];
+    for (const t of types) {
+      const last = t.series_offsets[t.series_offsets.length - 1];
+      for (let d = from; d <= to; d = eventsData.addDays(d, 1)) {
+        if (t.first_weekday !== null && eventsData.weekdayOf(d) !== t.first_weekday) continue;
+        if (eventsData.addDays(d, last) > to) break;
+        candidates.push({ type: t, date: d });
+      }
+    }
+    candidates.sort((a, b) => a.date.localeCompare(b.date) || a.type.id - b.type.id);
+    const order = spreadOrder(candidates.length);
+
+    // Bestehende Belegung und geplante Stunden
+    const { rows: existing } = await db.query(`SELECT ${EVENT_FIELDS} FROM events`);
+    const typeById = new Map(lk.types.map((t) => [t.id, t]));
+    const busy = new Map(); // "pro|datum" → [[Beginn, Ende]]
+    const planned = new Map();
+    const book = (ev) => {
+      const key = `${ev.pro_id}|${ev.date}`;
+      busy.set(key, [...(busy.get(key) || []), [ev.start_min, ev.end_min]]);
+    };
+    for (const ev of existing) {
+      book(ev);
+      planned.set(ev.pro_id, (planned.get(ev.pro_id) || 0) + minutesOf(ev, typeById.get(ev.type_id), "brutto"));
+    }
+    const free = (ev) => !(busy.get(`${ev.pro_id}|${ev.date}`) || []).some(([s, e]) => ev.start_min < e && ev.end_min > s);
+
+    const toInsert = [];
+    const summary = [];
+    for (const pro of proList) {
+      const before = planned.get(pro.id) || 0;
+      if (!pro.sollstunden) {
+        summary.push({ pro: pro.name, hinweis: "keine Sollstunden" });
+        continue;
+      }
+      const goal = (pro.sollstunden * 60 * goalPercent) / 100;
+      const freeDays = freie_tage_beachten ? new Set((pro.freie_tage || []).map((d) => WEEKDAY_INDEX[String(d).toLowerCase()])) : new Set();
+      let have = before;
+      const perType = new Map();
+      for (const idx of order) {
+        if (have >= goal) break;
+        const { type, date } = candidates[idx];
+        const series = eventsData.planNew(type, { pro_id: pro.id, date });
+        const minutes = series.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
+        if (have + minutes > goal + minutes / 2) continue; // nicht deutlich übers Ziel
+        if (series.some((ev) => freeDays.has(eventsData.weekdayOf(ev.date)) || !free(ev))) continue;
+        for (const ev of series) {
+          book(ev);
+          toInsert.push(ev);
+        }
+        have += minutes;
+        perType.set(type.code || type.name, (perType.get(type.code || type.name) || 0) + 1);
+      }
+      planned.set(pro.id, have);
+      summary.push({
+        pro: pro.name,
+        vorher_prozent: Math.round((before / 60 / pro.sollstunden) * 1000) / 10,
+        nachher_prozent: Math.round((have / 60 / pro.sollstunden) * 1000) / 10,
+        serien: Object.fromEntries(perType),
+        ...(have < goal * 0.95 ? { hinweis: "Ziel nicht erreicht (zu wenig freie Termine)" } : {}),
+      });
+    }
+
+    let created = [];
+    if (toInsert.length) {
+      const col = (key) => toInsert.map((ev) => ev[key]);
+      ({ rows: created } = await db.query(
+        `INSERT INTO events (type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by)
+         SELECT * FROM unnest($1::int[], $2::int[], $3::date[], $4::int[], $5::int[], $6::text[], $7::text[], $8::int[], $9::int[])
+         RETURNING ${EVENT_FIELDS}, created_at`,
+        [col("type_id"), col("pro_id"), col("date"), col("start_min"), col("end_min"), col("notiz"),
+          col("series_id"), col("series_index"), toInsert.map(() => userId)]
+      ));
+    }
+    return { created, errors: [], dryRun, summary };
+  });
+}
+
 // Nimmt genau eine Sammel-Aktion zurück, ohne andere Daten zu berühren:
 // undo = { created: [{ id, created_at }] } | { deleted: [Zeilen] } | { updated: [Zeilen vorher] }.
 // Angelegte Events werden nur gelöscht, wenn auch der Erstellungszeitpunkt passt
@@ -373,5 +488,5 @@ async function describeEvents(list) {
 module.exports = {
   TYPE_FIELDS, EVENT_FIELDS, PlanningError,
   loadType, assertFree, formatDate, clock, timeArg, minutesOf,
-  overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, undoChange, describeEvents,
+  overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, autoFill, undoChange, describeEvents,
 };

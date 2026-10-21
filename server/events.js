@@ -246,5 +246,5 @@ function planUpdate(existing, type, body) {
 
 module.exports = {
   SEED_TYPES, SEED_SERIES_TYPES, TYPE_COLUMNS, WEEKDAYS, ValidationError,
-  normalizeType, typeValues, planNew, planUpdate, id, SYNC_FIXED_EVENTS_SQL,
+  normalizeType, typeValues, planNew, planUpdate, id, addDays, weekdayOf, SYNC_FIXED_EVENTS_SQL,
 };
