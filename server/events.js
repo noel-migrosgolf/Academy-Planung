@@ -12,7 +12,7 @@
 //   series_offsets                – Serie: Tage nach dem ersten Termin, z. B. [0, 1, 7, 8]
 //                                   = Sa, darauf folgender So, nächster Sa, nächster So
 //   einplanbar_von/einplanbar_bis – alle Termine müssen in diesem Zeitraum liegen
-//   max_anzahl                    – höchstens so viele Durchführungen (eine Serie zählt einmal), über alle Pros
+//   max_stunden                   – höchstens so viele Sollstunden (brutto) für diesen Typ, über alle Pros
 //   series_times                  – Serie: eigene Zeit je Termin, z. B. [[840, 990], [600, 750], [840, 990]]
 //                                   (dann sind auch mehrere Termine am selben Tag möglich)
 
@@ -50,7 +50,7 @@ const AREAS = {
 };
 
 const TYPE_COLUMNS = [
-  "code", "einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_anzahl", "name", "color", "calc", "brutto_min", "netto_min", "brutto_fix_min", "netto_fix_min",
+  "code", "einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_stunden", "name", "color", "calc", "brutto_min", "netto_min", "brutto_fix_min", "netto_fix_min",
   "fixed_start_min", "fixed_end_min", "first_weekday", "series_offsets", "series_times",
 ];
 
@@ -96,8 +96,12 @@ function normalizeType(body) {
   if (einplanbar_von && einplanbar_bis && einplanbar_bis < einplanbar_von) {
     throw new ValidationError("Einplanbar: «bis» liegt vor «von».");
   }
-  const max_anzahl = empty(body.max_anzahl) ? null : int(body.max_anzahl, "Maximale Anzahl", 1, 10000);
-  const t = { code, einsatzbereich, einplanbar_von, einplanbar_bis, max_anzahl, name, color, calc, brutto_min: 30, netto_min: 30, brutto_fix_min: null, netto_fix_min: null };
+  let max_stunden = null;
+  if (!empty(body.max_stunden)) {
+    max_stunden = Math.round(Number(body.max_stunden) * 100) / 100;
+    if (!(max_stunden > 0 && max_stunden <= 100000)) throw new ValidationError("Max. Sollstunden: bitte eine Zahl grösser als 0.");
+  }
+  const t = { code, einsatzbereich, einplanbar_von, einplanbar_bis, max_stunden, name, color, calc, brutto_min: 30, netto_min: 30, brutto_fix_min: null, netto_fix_min: null };
   if (calc === "faktor") {
     t.brutto_min = int(body.brutto_min, "Brutto (Minuten pro 30 min)", 0, 30);
     t.netto_min = int(body.netto_min, "Netto (Minuten pro 30 min)", 0, 30);

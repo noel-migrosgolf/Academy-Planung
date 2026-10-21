@@ -113,15 +113,16 @@
     gce: { label: "GCE", field: "gce_training" },
   };
 
-  // Durchführungen eines Typs (eine Serie zählt einmal)
+  // Geplante Sollstunden (brutto) eines Typs, über alle Pros
   function usageOf(t) {
-    return new Set(data.events.filter((e) => e.type_id === t.id).map((e) => e.series_id || `e${e.id}`)).size;
+    return data.events.filter((e) => e.type_id === t.id).reduce((sum, e) => sum + minutesOf(e, "brutto"), 0);
   }
 
   function windowText(t) {
     const day = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.` : "…");
     const range = t.einplanbar_von || t.einplanbar_bis ? `${day(t.einplanbar_von)}–${day(t.einplanbar_bis)}` : "ganzes Jahr";
-    return t.max_anzahl ? `${range} · ${usageOf(t)}/${t.max_anzahl}` : range;
+    const h = (v) => v.toLocaleString("de-CH", { maximumFractionDigits: 1 });
+    return t.max_stunden ? `${range} · ${h(usageOf(t) / 60)}/${h(t.max_stunden)} h` : range;
   }
 
   function allowedPros(t) {
@@ -390,7 +391,7 @@
     f.einsatzbereich.value = type ? type.einsatzbereich || "" : "kurse";
     f.einplanbar_von.value = type?.einplanbar_von || "";
     f.einplanbar_bis.value = type?.einplanbar_bis || "";
-    f.max_anzahl.value = type?.max_anzahl ?? "";
+    f.max_stunden.value = type?.max_stunden ?? "";
     f.color.value = type?.color || "#6a8fd8";
     f.calc.value = type?.calc || "faktor";
     f.brutto_min.value = type?.brutto_min ?? 30;
@@ -417,7 +418,7 @@
       einsatzbereich: f.einsatzbereich.value || null,
       einplanbar_von: f.einplanbar_von.value || null,
       einplanbar_bis: f.einplanbar_bis.value || null,
-      max_anzahl: f.max_anzahl.value === "" ? null : Number(f.max_anzahl.value),
+      max_stunden: f.max_stunden.value === "" ? null : Number(f.max_stunden.value),
       color: f.color.value,
       calc: f.calc.value,
       brutto_min: Number(f.brutto_min.value),

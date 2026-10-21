@@ -64,7 +64,7 @@ Daten
 - Pros haben Sollstunden pro Jahr. Auslastung = geplante Brutto-Stunden / Sollstunden.
 - Event-Typen: Brutto zählt gegen die Sollstunden, Netto ist Unterrichtszeit, der Puffer liegt am Ende. Ein Typ kann eine feste Zeit und einen festen Wochentag für den ersten Termin vorgeben. Serien-Typen legen mehrere Termine an (Abstände in Tagen ab dem ersten Termin); bei Serien sind pro Termin nur Pro und Notiz änderbar. Gib bei Serien mit «pros» pro Termin einen eigenen Pro an.
 - Ein Pro kann keine zwei überschneidenden Events haben.
-- Event-Typen können einen einplanbaren Zeitraum und eine Höchstzahl an Durchführungen haben (eine Serie zählt einmal, über alle Pros); daten_lesen zeigt beides.
+- Event-Typen können einen einplanbaren Zeitraum und ein Maximum an Sollstunden (brutto, über alle Pros zusammen) haben; daten_lesen zeigt beides.
 - Jeder Event-Typ hat einen Einsatzbereich (Kurse, Bambini, GCE oder alle); nur Pros mit diesem Bereich dürfen ihn übernehmen. Die Bereiche der Pros stehen bei daten_lesen unter «Einsatz».
 
 Arbeitsweise

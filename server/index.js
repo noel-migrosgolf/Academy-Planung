@@ -207,7 +207,7 @@ api.put("/event-types/:id", auth.requireDataAdmin, (req, res) =>
     // Fehlen neuere Felder in der Anfrage (z. B. ältere Seite im Browser-Cache), bleiben sie unverändert.
     const body = { ...req.body };
     const { rows: old } = await pool.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [typeId]);
-    for (const key of ["einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_anzahl"]) {
+    for (const key of ["einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_stunden"]) {
       if (!(key in body)) body[key] = old[0]?.[key] ?? null;
     }
     const t = eventsData.normalizeType(body);
@@ -271,7 +271,7 @@ api.post("/events", auth.requireLogin, versioned(async (req, b) => `Geplant: ${a
     const type = await loadType(db, eventsData.id(req.body.type_id, "Event-Typ"));
     const planned = eventsData.planNew(type, req.body);
     await planning.assertArea(db, type, planned.map((ev) => ev.pro_id));
-    await planning.assertCapacity(db, type);
+    await planning.assertCapacity(db, type, planned.reduce((sum, ev) => sum + planning.minutesOf(ev, type, "brutto"), 0));
     const created = [];
     for (const ev of planned) {
       await assertFree(db, ev, 0, planned.length > 1 ? `Termin ${ev.series_index}: ` : "");
@@ -295,7 +295,8 @@ api.put("/events/:id", auth.requireLogin, versioned(async (req, b) => `Geändert
     const type = await loadType(db, typeId);
     const ev = eventsData.planUpdate(rows[0], type, req.body);
     await planning.assertArea(db, type, [ev.pro_id]);
-    if (type.id !== rows[0].type_id) await planning.assertCapacity(db, type);
+    const before = type.id === rows[0].type_id ? planning.minutesOf(rows[0], type, "brutto") : 0;
+    await planning.assertCapacity(db, type, planning.minutesOf(ev, type, "brutto") - before);
     await assertFree(db, ev, eventId, "");
     const { rows: updated } = await db.query(
       `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6

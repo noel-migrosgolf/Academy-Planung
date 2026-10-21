@@ -72,16 +72,26 @@ async function assertArea(db, type, proIds, label = "") {
   }
 }
 
-// Höchstzahl an Durchführungen eines Typs (eine Serie zählt einmal), über alle Pros.
-const COUNT_SQL = "SELECT count(DISTINCT coalesce(series_id, id::text))::int AS n FROM events WHERE type_id = $1";
+// Höchstens max_stunden Sollstunden (brutto) je Typ, über alle Pros.
+async function usedMinutes(db, type) {
+  const { rows } = await db.query("SELECT start_min, end_min FROM events WHERE type_id = $1", [type.id]);
+  return rows.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
+}
 
-async function assertCapacity(db, type, label = "") {
-  if (!type.max_anzahl) return;
-  const { rows } = await db.query(COUNT_SQL, [type.id]);
-  if (rows[0].n >= type.max_anzahl) {
-    throw new eventsData.ValidationError(`${label}«${type.name}» ist bereits ${rows[0].n}× eingeplant (Maximum ${type.max_anzahl}).`);
+const hoursText = (min) => `${Math.round((min / 60) * 10) / 10} h`;
+
+// addMinutes: zusätzliche Brutto-Minuten durch die Änderung (bei Änderungen die Differenz)
+async function assertCapacity(db, type, addMinutes, label = "") {
+  if (!type.max_stunden || addMinutes <= 0) return;
+  const used = await usedMinutes(db, type);
+  if (used + addMinutes > type.max_stunden * 60 + 0.01) {
+    throw new eventsData.ValidationError(
+      `${label}«${type.name}»: höchstens ${type.max_stunden} Sollstunden, bereits ${hoursText(used)} geplant, dazu kämen ${hoursText(addMinutes)}.`
+    );
   }
 }
+
+const sumBrutto = (events, type) => events.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
 
 // --- Namen auflösen (Pro per Name oder Kürzel, Typ per Name oder ID) ---
 
@@ -155,7 +165,7 @@ async function overview({ from, to, pro } = {}, db = pool) {
       id: t.code,
       bereich: eventsData.AREAS[t.einsatzbereich]?.label || "alle",
       einplanbar: t.einplanbar_von || t.einplanbar_bis ? `${t.einplanbar_von || "…"} bis ${t.einplanbar_bis || "…"}` : "ganzes Jahr",
-      max_anzahl: t.max_anzahl,
+      max_stunden: t.max_stunden,
       name: t.name,
       stunden: t.calc === "pauschal"
         ? `pro Termin ${t.brutto_fix_min / 60} h brutto, ${t.netto_fix_min / 60} h netto`
@@ -192,9 +202,9 @@ function overviewText(o, { maxEvents = 400, parts = ["pros", "typen", "events"] 
     }
   }
   if (parts.includes("typen")) {
-    lines.push("TYPEN (ID|Name|Einsatzbereich|einplanbar|max. Anzahl|Stunden|Zeit|erster Wochentag|Termine Tage ab Start)");
+    lines.push("TYPEN (ID|Name|Einsatzbereich|einplanbar|max. Sollstunden|Stunden|Zeit|erster Wochentag|Termine Tage ab Start)");
     for (const t of o.typen) {
-      lines.push([t.id || "-", t.name, t.bereich, t.einplanbar, t.max_anzahl ?? "-", t.stunden, t.zeit, t.erster_wochentag || "-", t.termine_tage_ab_start.join(",")].join("|"));
+      lines.push([t.id || "-", t.name, t.bereich, t.einplanbar, t.max_stunden ?? "-", t.stunden, t.zeit, t.erster_wochentag || "-", t.termine_tage_ab_start.join(",")].join("|"));
     }
   }
   if (parts.includes("events")) {
@@ -267,7 +277,7 @@ async function bulkCreate(items, { dryRun = false, userId = null } = {}) {
         notiz: item.notiz,
       });
       await assertArea(db, type, planned.map((ev) => ev.pro_id), label);
-      await assertCapacity(db, type, label);
+      await assertCapacity(db, type, sumBrutto(planned, type), label);
       for (const ev of planned) {
         await assertFree(db, ev, 0, `${label}${planned.length > 1 ? `Termin ${ev.series_index}: ` : ""}`);
         const { rows } = await db.query(
@@ -326,7 +336,8 @@ async function bulkUpdate(changes, { dryRun = false } = {}) {
         notiz: c.notiz ?? current.notiz,
       });
       await assertArea(db, type, [ev.pro_id], label);
-      if (type.id !== current.type_id) await assertCapacity(db, type, label);
+      const before = type.id === current.type_id ? minutesOf(current, type, "brutto") : 0;
+      await assertCapacity(db, type, minutesOf(ev, type, "brutto") - before, label);
       await assertFree(db, ev, id, label);
       const { rows: done } = await db.query(
         `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
@@ -386,7 +397,7 @@ async function autoFill({ pros, ziel_prozent, ziele, typen, von, bis, freie_tage
     // Mögliche Starttage je Typ im Zeitraum (ganze Serie muss hineinpassen)
     const candidates = [];
     // Einplanbarer Zeitraum des Typs schränkt zusätzlich ein; bereits geplante Durchführungen zählen zur Höchstzahl.
-    const count = new Map();
+    const used = new Map(); // Brutto-Minuten je Typ mit Höchstwert
     for (const t of types) {
       const last = t.series_offsets[t.series_offsets.length - 1];
       const start = t.einplanbar_von && t.einplanbar_von > from ? t.einplanbar_von : from;
@@ -396,7 +407,7 @@ async function autoFill({ pros, ziel_prozent, ziele, typen, von, bis, freie_tage
         if (eventsData.addDays(d, last) > end) break;
         candidates.push({ type: t, date: d });
       }
-      if (t.max_anzahl) count.set(t.id, (await db.query(COUNT_SQL, [t.id])).rows[0].n);
+      if (t.max_stunden) used.set(t.id, await usedMinutes(db, t));
     }
     candidates.sort((a, b) => a.date.localeCompare(b.date) || a.type.id - b.type.id);
     const order = spreadOrder(candidates.length);
@@ -436,17 +447,18 @@ async function autoFill({ pros, ziel_prozent, ziele, typen, von, bis, freie_tage
         if (have >= goal) break;
         const { type, date } = candidates[idx];
         if (!areaAllows(type, pro)) continue;
-        if (type.max_anzahl && count.get(type.id) >= type.max_anzahl) continue;
+
         const series = eventsData.planNew(type, { pro_id: pro.id, date });
         const minutes = series.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
         if (have + minutes > goal + minutes / 2) continue; // nicht deutlich übers Ziel
+        if (type.max_stunden && used.get(type.id) + minutes > type.max_stunden * 60 + 0.01) continue;
         if (series.some((ev) => freeDays.has(eventsData.weekdayOf(ev.date)) || !free(ev))) continue;
         for (const ev of series) {
           book(ev);
           toInsert.push(ev);
         }
         have += minutes;
-        if (type.max_anzahl) count.set(type.id, count.get(type.id) + 1);
+        if (type.max_stunden) used.set(type.id, used.get(type.id) + minutes);
         perType.set(type.code || type.name, (perType.get(type.code || type.name) || 0) + 1);
       }
       planned.set(pro.id, have);
