@@ -21,13 +21,20 @@ api.get("/me", (req, res) => {
   res.json({ user: req.session });
 });
 
+// Benutzerauswahl auf der Anmeldeseite (nur Name, ohne Anmeldung abrufbar).
+api.get("/auth/users", async (req, res) => {
+  const { rows } = await pool.query("SELECT id, name FROM users ORDER BY name");
+  res.json({ users: rows });
+});
+
 api.post("/login", limitLogin, async (req, res) => {
-  const username = String(req.body.username || "").trim().toLowerCase();
   const password = String(req.body.password || "");
-  const { rows } = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
+  const { rows } = req.body.userId !== undefined
+    ? await pool.query("SELECT * FROM users WHERE id = $1", [Number.parseInt(req.body.userId, 10) || 0])
+    : await pool.query("SELECT * FROM users WHERE username = $1", [String(req.body.username || "").trim().toLowerCase()]);
   const user = rows[0];
   if (!user || !(await auth.verifyPassword(password, user.password_hash))) {
-    return res.status(401).json({ error: "Benutzername oder Passwort falsch." });
+    return res.status(401).json({ error: "Passwort falsch." });
   }
   await auth.createSession(res, { userId: user.id, role: "user" });
   res.json({ user: { role: "user", id: user.id, name: user.name, username: user.username } });

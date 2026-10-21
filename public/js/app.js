@@ -50,17 +50,23 @@
     return name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join("");
   }
 
+  function firstName(name) {
+    return name.trim().split(/\s+/)[0];
+  }
+
   // Theme (hell/dunkel)
-  $("#btn-theme").addEventListener("click", () => {
-    const root = document.documentElement;
-    const dark = root.dataset.theme
-      ? root.dataset.theme === "dark"
-      : matchMedia("(prefers-color-scheme: dark)").matches;
-    root.dataset.theme = dark ? "light" : "dark";
-    try {
-      localStorage.setItem("academy.theme", root.dataset.theme);
-    } catch {}
-  });
+  $$("[data-theme-toggle]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const root = document.documentElement;
+      const dark = root.dataset.theme
+        ? root.dataset.theme === "dark"
+        : matchMedia("(prefers-color-scheme: dark)").matches;
+      root.dataset.theme = dark ? "light" : "dark";
+      try {
+        localStorage.setItem("academy.theme", root.dataset.theme);
+      } catch {}
+    })
+  );
 
   function showPage(name) {
     if (name === "users" && session?.role !== "admin") name = "calendar";
@@ -83,7 +89,6 @@
     $("#view-login").hidden = loggedIn;
     $("#session-info").hidden = !loggedIn;
     btnLogout.hidden = !loggedIn;
-    btnAdmin.hidden = loggedIn;
     $$("[data-admin]").forEach((el) => (el.hidden = session?.role !== "admin"));
 
     if (loggedIn) {
@@ -93,6 +98,8 @@
       loadPros();
     } else {
       for (const el of Object.values(pages)) el.hidden = true;
+      renderUserPicker();
+      lstep("user");
     }
   }
 
@@ -202,22 +209,177 @@
     btn.addEventListener("click", () => showPage(btn.dataset.page))
   );
 
-  // Login
-  $("#login-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const form = e.currentTarget;
+  // Login (Ablauf wie im Event Manager: Benutzer → Passwort → Laden → Begrüssung)
+  const GREETINGS = {
+    morgen: [
+      "Guten Morgen, {u}! Bereit für den Tag?",
+      "Morgen, {u}! Der Kaffee ist gemacht – was steht an?",
+      "Schön, dass du da bist, {u}. Womit starten wir?",
+    ],
+    tag: [
+      "Willkommen zurück, {u}. Was steht heute an?",
+      "Hallo {u}! Womit möchtest du weitermachen?",
+      "Da bist du ja, {u}. Auf zur nächsten Planung!",
+      "Schön dich zu sehen, {u}. Was ist heute dran?",
+      "Alles bereit, {u}. Womit fangen wir an?",
+    ],
+    abend: [
+      "Guten Abend, {u}. Noch etwas Wichtiges offen?",
+      "Späte Schicht, {u}? Was steht noch an?",
+      "Hallo {u}! Lass uns den Tag abschliessen.",
+    ],
+    freitag: [
+      "Freitag, {u}! Was planen wir noch vor dem Wochenende?",
+      "Endspurt, {u}. Was steht noch an?",
+    ],
+    montag: [
+      "Neue Woche, {u}! Womit starten wir?",
+      "Montag, {u}. Auf ein Neues – was liegt an?",
+    ],
+  };
+
+  function pickGreeting(name) {
+    const d = new Date();
+    const h = d.getHours();
+    const wd = d.getDay();
+    const pool = GREETINGS.tag.slice();
+    if (h < 11) pool.push(...GREETINGS.morgen);
+    else if (h >= 18) pool.push(...GREETINGS.abend);
+    if (wd === 1) pool.push(...GREETINGS.montag);
+    if (wd === 5) pool.push(...GREETINGS.freitag);
+    return pool[Math.floor(Math.random() * pool.length)].replace(/\{u\}/g, name);
+  }
+
+  let loginUsers = [];
+  let pending = null;
+
+  function lstep(name) {
+    $$(".lstep").forEach((s) => s.classList.toggle("on", s.dataset.step === name));
+    // Logo und Schriftzug nur bei der Benutzerwahl zeigen
+    $(".login .brandmark").hidden = name !== "user";
+  }
+
+  async function renderUserPicker() {
+    const box = $("#users");
+    box.innerHTML = '<div class="note">Benutzer werden geladen …</div>';
     try {
-      ({ user: session } = await api("/login", {
-        method: "POST",
-        body: { username: form.username.value, password: form.password.value },
-      }));
-      form.reset();
-      showError(form);
-      currentPage = "calendar";
-      render();
+      ({ users: loginUsers } = await api("/auth/users"));
     } catch (err) {
-      showError(form, err.message);
+      box.innerHTML = '<div class="note err">Server nicht erreichbar.</div>';
+      return;
     }
+    box.replaceChildren();
+    if (!loginUsers.length) {
+      box.innerHTML = '<div class="note">Noch keine Benutzer angelegt. Bitte oben rechts im Admin-Bereich anlegen.</div>';
+      return;
+    }
+    for (const user of loginUsers) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "user-pick";
+      const avatar = document.createElement("span");
+      avatar.className = "avatar";
+      avatar.textContent = initials(user.name);
+      const name = document.createElement("span");
+      name.className = "user-name";
+      name.textContent = user.name;
+      btn.append(avatar, name);
+      btn.addEventListener("click", () => openPwStep(user));
+      box.appendChild(btn);
+    }
+  }
+
+  function openPwStep(user) {
+    pending = user;
+    $("#pw-avatar").textContent = initials(user.name);
+    $("#pw-name").textContent = user.name;
+    $("#pw-input").value = "";
+    $("#pw-input").type = "password";
+    $("#pw-err").textContent = "";
+    lstep("pw");
+    setTimeout(() => $("#pw-input").focus(), 60);
+  }
+
+  async function tryLogin() {
+    const input = $("#pw-input");
+    if (!input.value) {
+      $("#pw-err").textContent = "Bitte Passwort eingeben.";
+      return;
+    }
+    const btn = $("#pw-go");
+    btn.disabled = true;
+    btn.textContent = "Prüfe …";
+    try {
+      const { user } = await api("/login", {
+        method: "POST",
+        body: { userId: pending.id, password: input.value },
+      });
+      $("#pw-err").textContent = "";
+      startLoading(user);
+    } catch (err) {
+      $("#pw-err").textContent = err.message || "Anmeldung fehlgeschlagen.";
+      input.classList.add("err");
+      setTimeout(() => input.classList.remove("err"), 350);
+      input.select();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Anmelden";
+    }
+  }
+
+  function startLoading(user) {
+    $("#load-avatar").textContent = initials(user.name);
+    $("#load-name").textContent = `${user.name} wird angemeldet`;
+    lstep("load");
+    const steps = $$("#load-steps li");
+    steps.forEach((s) => s.classList.remove("on"));
+    [250, 1150, 2050].forEach((delay, i) => setTimeout(() => steps[i].classList.add("on"), delay));
+    setTimeout(() => showWelcome(user), 2750);
+  }
+
+  function showWelcome(user) {
+    $("#wel-avatar").textContent = initials(user.name);
+    lstep("welcome");
+    const text = pickGreeting(firstName(user.name));
+    const el = $("#wel-txt");
+    el.textContent = "";
+    let i = 0;
+    const tick = () => {
+      if (i <= text.length) {
+        el.textContent = text.slice(0, i++);
+        setTimeout(tick, 28 + Math.random() * 34);
+      } else {
+        setTimeout(() => finishLogin(user), 2000);
+      }
+    };
+    setTimeout(tick, 260);
+  }
+
+  function finishLogin(user) {
+    session = user;
+    pending = null;
+    currentPage = "calendar";
+    render();
+    toast(`Willkommen, ${firstName(user.name)}!`);
+  }
+
+  $("#pw-go").addEventListener("click", tryLogin);
+  $("#pw-back").addEventListener("click", () => {
+    pending = null;
+    lstep("user");
+  });
+  $("#pw-eye").addEventListener("click", () => {
+    const input = $("#pw-input");
+    input.type = input.type === "password" ? "text" : "password";
+    $("#pw-eye").setAttribute("aria-label", input.type === "password" ? "Passwort anzeigen" : "Passwort verbergen");
+    input.focus();
+  });
+  $("#pw-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      tryLogin();
+    }
+    if (e.key === "Escape") $("#pw-back").click();
   });
 
   // Admin

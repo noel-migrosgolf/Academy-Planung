@@ -3,8 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Academy Planung</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M11 26V6l11 5-11 5' fill='none' stroke='white' stroke-width='2.6' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <title>AI Academy Golf · Planung</title>
+  <link rel="icon" href="favicon.ico" sizes="48x48">
+  <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32.png">
+  <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script>
     // Gespeichertes Farbschema vor dem ersten Rendern setzen (verhindert Flackern).
     try {
@@ -18,24 +23,18 @@
   <div id="app" class="app guest">
     <header class="top">
       <div class="brand">
-        <div class="mark">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V3l11 4.5L6 12"/><circle cx="15" cy="19" r="2"/></svg>
-        </div>
-        <div><b>Academy Holzhäusern</b><span>Planungstool</span></div>
+        <img class="mark" src="img/logo-icon.png" alt="">
+        <div><img class="word" src="img/logo-wordmark.png" alt="AI Academy Golf"><span>Planungstool</span></div>
       </div>
       <div class="spacer"></div>
       <span id="session-info" class="user-chip" hidden>
         <i id="session-avatar"></i><span id="session-name"></span>
       </span>
-      <button id="btn-admin" class="btn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/></svg>
-        <span class="lbl">Admin</span>
-      </button>
       <button id="btn-logout" class="btn" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/></svg>
         <span class="lbl">Abmelden</span>
       </button>
-      <button id="btn-theme" class="btn icon ghost" title="Hell/Dunkel" aria-label="Darstellung wechseln">
+      <button class="btn icon ghost" data-theme-toggle title="Hell/Dunkel" aria-label="Darstellung wechseln">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
       </button>
     </header>
@@ -57,26 +56,76 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.4 3.4-5.5 6.5-5.5s5.7 2.1 6.5 5.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16.5 14.6c2.6-.3 4.6 1.4 5.2 4.4"/></svg>
         Benutzer
       </button>
-      <div class="foot">Academy Holzhäusern<br>Planungstool</div>
+      <div class="foot">AI Academy Golf<br>Golfpark Holzhäusern</div>
     </nav>
 
     <main class="main">
-      <!-- Login -->
+      <!-- Login (wie im Event Manager) -->
       <section id="view-login" class="login" hidden>
-        <form id="login-form" class="card login-card" autocomplete="on">
-          <div class="hd"><h3>Anmelden</h3></div>
-          <div class="bd form">
-            <p class="lead">Melde dich mit deinem Benutzerkonto an.</p>
-            <label>Benutzername
-              <input name="username" type="text" autocomplete="username" required>
-            </label>
-            <label>Passwort
-              <input name="password" type="password" autocomplete="current-password" required>
-            </label>
-            <p class="form-error" role="alert"></p>
-            <button class="btn primary block" type="submit">Anmelden</button>
+        <div class="login-corner">
+          <button id="btn-admin" class="btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/></svg>
+            <span class="lbl">Admin</span>
+          </button>
+          <button class="btn icon ghost" data-theme-toggle title="Hell/Dunkel" aria-label="Darstellung wechseln">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
+          </button>
+        </div>
+        <div class="login-card">
+          <div class="brandmark">
+            <img class="brandmark-logo" src="img/logo-icon.png" alt="">
+            <div class="brandmark-eyebrow">Golfpark Holzhäusern</div>
+            <img class="brandmark-word" src="img/logo-wordmark.png" alt="AI Academy Golf">
           </div>
-        </form>
+
+          <!-- Schritt 1: Benutzer -->
+          <div class="lstep on" data-step="user">
+            <span class="login-label">Benutzer wählen</span>
+            <div class="users" id="users"></div>
+          </div>
+
+          <!-- Schritt 2: Passwort -->
+          <div class="lstep" data-step="pw">
+            <div class="avatar md" id="pw-avatar"></div>
+            <h1 id="pw-name"></h1>
+            <p class="sub">Bitte Passwort eingeben</p>
+            <div class="pw-wrap">
+              <input type="password" id="pw-input" placeholder="Passwort" autocomplete="current-password" aria-label="Passwort" enterkeyhint="go">
+              <button class="pw-eye" id="pw-eye" type="button" aria-label="Passwort anzeigen">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+            <div class="pw-err" id="pw-err" role="alert"></div>
+            <div class="pw-actions">
+              <button class="btn" id="pw-back" type="button">Zurück</button>
+              <button class="btn primary" id="pw-go" type="button">Anmelden</button>
+            </div>
+          </div>
+
+          <!-- Schritt 3: Laden -->
+          <div class="lstep" data-step="load">
+            <div class="loader-avatar"><div class="avatar" id="load-avatar"></div></div>
+            <h1 id="load-name"></h1>
+            <p class="sub">Einen Moment …</p>
+            <ul class="loader-steps" id="load-steps">
+              <li><span class="dot">✓</span>Anmeldung geprüft</li>
+              <li><span class="dot">✓</span>Planung wird geladen</li>
+              <li><span class="dot">✓</span>Alles bereit</li>
+            </ul>
+          </div>
+
+          <!-- Schritt 4: Willkommen -->
+          <div class="lstep" data-step="welcome">
+            <div class="avatar lg welcome-avatar" id="wel-avatar"></div>
+            <p class="welcome-type"><span id="wel-txt"></span><span class="caret"></span></p>
+          </div>
+
+          <div class="startfoot">
+            <span class="vchip">Version 1.0</span>
+            <span class="dot2"></span>
+            <span>Migros Golf AG</span>
+          </div>
+        </div>
       </section>
 
       <!-- Kalender (Einsatzplanung) -->
