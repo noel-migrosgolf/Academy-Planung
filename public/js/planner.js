@@ -128,6 +128,29 @@
     return lines.join("\n");
   }
 
+  // Erste freie Stunde ab 09:00 für ein neues Event an diesem Tag
+  function suggestSlot(date, proId) {
+    let start = 9 * 60;
+    for (const ev of eventsOn(date, proId)) {
+      if (ev.start_min < start + 60 && ev.end_min > start) start = ev.end_min;
+    }
+    if (start + 60 > DAY_END * 60) start = Math.max(DAY_START * 60, DAY_END * 60 - 60);
+    return { start_min: start, end_min: start + 60 };
+  }
+
+  // Rechtsklick auf eine freie Stelle: Event für diesen Pro und Tag erstellen
+  function createMenu(e, pro, date, slot, extra = []) {
+    const prefill = { pro_id: pro.id, date: D.isoKey(date), ...slot };
+    ContextMenu.open(e, [
+      {
+        label: "Event erstellen",
+        hint: `${pro.name} · ${D.formatShort(date)} · ${E.clock(slot.start_min)}–${E.clock(slot.end_min)}`,
+        action: () => E.openEvent(null, prefill),
+      },
+      ...extra,
+    ]);
+  }
+
   // --- Tagesansicht: eine Spalte pro Pro mit Zeitachse ---
 
   const minToY = (min) => GRID_TOP + ((min - DAY_START * 60) / 30) * SLOT_PX;
@@ -157,6 +180,7 @@
     );
     block.addEventListener("pointerdown", (e) => e.stopPropagation());
     block.addEventListener("click", () => E.openEvent(ev));
+    block.addEventListener("contextmenu", (e) => E.eventMenu(e, ev));
     return block;
   }
 
@@ -211,7 +235,7 @@
     const date = state.date;
     const list = visiblePros();
     const title = `${D.WEEKDAYS_LONG[D.weekday(date)]}, ${D.formatShort(date)}`;
-    const hd = cardHead(title, rangeSummary([date], list), "Aufziehen oder klicken = neues Event · voll = Unterricht (netto), schraffiert = Puffer am Ende");
+    const hd = cardHead(title, rangeSummary([date], list), "Aufziehen, Klick oder Rechtsklick = neues Event · voll = Unterricht (netto), schraffiert = Puffer am Ende");
     const badge = holidayBadge(date);
     if (badge) hd.insertBefore(badge, hd.children[1]);
     card.appendChild(hd);
@@ -249,6 +273,11 @@
       }
       for (const ev of eventsOn(date, pro.id)) col.appendChild(eventBlock(ev));
       enableCreate(col, pro, date);
+      col.addEventListener("contextmenu", (e) => {
+        const y = e.clientY - col.getBoundingClientRect().top;
+        const start = limit(Math.floor(yToMin(y) / 30) * 30);
+        createMenu(e, pro, date, { start_min: start, end_min: Math.min(start + 60, DAY_END * 60) });
+      });
       grid.appendChild(col);
     }
     card.appendChild(grid);
@@ -260,7 +289,7 @@
     const monday = D.startOfWeek(state.date);
     const days = Array.from({ length: 7 }, (_, i) => D.addDays(monday, i));
     const list = visiblePros();
-    card.appendChild(cardHead(`Alle Pros · KW ${D.isoWeek(monday)}`, rangeSummary(days, list), "Klick auf einen Tag = Tagesansicht"));
+    card.appendChild(cardHead(`Alle Pros · KW ${D.isoWeek(monday)}`, rangeSummary(days, list), "Rechtsklick = Event erstellen, bearbeiten, löschen"));
 
     if (!list.length) return emptyHint(card);
 
@@ -299,10 +328,14 @@
             e.stopPropagation();
             E.openEvent(ev);
           });
+          row.addEventListener("contextmenu", (e) => E.eventMenu(e, ev));
           c.appendChild(row);
         }
         c.title = `${pro.name} · ${D.formatShort(day)}`;
         c.addEventListener("click", () => setView("day", day));
+        c.addEventListener("contextmenu", (e) =>
+          createMenu(e, pro, day, suggestSlot(day, pro.id), [{ label: "Tagesansicht öffnen", action: () => setView("day", day) }])
+        );
         grid.appendChild(c);
       }
     }
@@ -332,7 +365,7 @@
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const days = Array.from({ length: daysInMonth }, (_, i) => new Date(year, month, i + 1));
     const list = visiblePros();
-    card.appendChild(cardHead(`Monatsübersicht · ${D.MONTHS[month]} ${year}`, rangeSummary(days, list), `Stunden ${state.mode} je Pro und Tag · Klick = Tagesansicht`));
+    card.appendChild(cardHead(`Monatsübersicht · ${D.MONTHS[month]} ${year}`, rangeSummary(days, list), `Stunden ${state.mode} je Pro und Tag · Klick = Tagesansicht · Rechtsklick = Menü`));
 
     if (!list.length) return emptyHint(card);
 
@@ -355,8 +388,20 @@
     for (const pro of list) {
       grid.appendChild(el("div", "pl", pro.name));
       for (const day of days) {
-        const x = heatCell(sum(eventsOn(day, pro.id)), 90, `${pro.name} · ${D.formatShort(day)}`);
+        const evs = eventsOn(day, pro.id);
+        const x = heatCell(sum(evs), 90, `${pro.name} · ${D.formatShort(day)}`);
         x.addEventListener("click", () => setView("day", day));
+        x.addEventListener("contextmenu", (e) =>
+          createMenu(e, pro, day, suggestSlot(day, pro.id), [
+            ...(evs.length ? ["-"] : []),
+            ...evs.map((ev) => ({
+              label: `Bearbeiten: ${E.clock(ev.start_min)} ${E.typeOf(ev)?.name || "Event"}`,
+              action: () => E.openEvent(ev),
+            })),
+            "-",
+            { label: "Tagesansicht öffnen", action: () => setView("day", day) },
+          ])
+        );
         grid.appendChild(x);
       }
     }

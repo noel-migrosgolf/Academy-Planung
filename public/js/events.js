@@ -112,6 +112,29 @@
     $("#dlg-event").showModal();
   }
 
+  async function deleteEvent(ev) {
+    const t = typeOf(ev);
+    const label = `${t?.name || "Event"} ${D.formatDate(ev.date)}, ${clock(ev.start_min)}–${clock(ev.end_min)} (${proName(ev.pro_id)})`;
+    if (!confirm(`Event löschen?\n${label}`)) return false;
+    await ctx.api(`/events/${ev.id}`, { method: "DELETE" });
+    ctx.toast("Event gelöscht");
+    ctx.reload();
+    return true;
+  }
+
+  // Rechtsklick-Menü für ein bestehendes Event
+  function eventMenu(e, ev) {
+    const t = typeOf(ev);
+    ContextMenu.open(e, [
+      { label: "Bearbeiten", hint: `${t?.name || "Event"} · ${clock(ev.start_min)}–${clock(ev.end_min)}`, action: () => openEvent(ev) },
+      {
+        label: "Löschen",
+        danger: true,
+        action: () => deleteEvent(ev).catch((err) => ctx.toast(err.message)),
+      },
+    ]);
+  }
+
   // --- Event-Typ-Dialog (Admin) ---
 
   function openType(type) {
@@ -186,6 +209,7 @@
         el("td", "muted", ev.notiz)
       );
       tr.addEventListener("click", () => openEvent(ev));
+      tr.addEventListener("contextmenu", (e) => eventMenu(e, ev));
       tbody.append(tr);
     }
     $("#event-empty").hidden = sorted.length > 0;
@@ -237,12 +261,9 @@
       }
     });
     $("#event-delete").addEventListener("click", async () => {
-      if (!editingEvent || !confirm("Dieses Event wirklich löschen?")) return;
+      if (!editingEvent) return;
       try {
-        await ctx.api(`/events/${editingEvent.id}`, { method: "DELETE" });
-        $("#dlg-event").close();
-        ctx.toast("Event gelöscht");
-        ctx.reload();
+        if (await deleteEvent(editingEvent)) $("#dlg-event").close();
       } catch (err) {
         ef.querySelector(".form-error").textContent = err.message;
       }
@@ -280,5 +301,5 @@
     $("#btn-new-type").addEventListener("click", () => openType(null));
   }
 
-  window.Events = { init, setData, render, openEvent, minutesOf, lessonEnd, formatHM, formatShortHours, clock, typeOf };
+  window.Events = { init, setData, render, openEvent, eventMenu, minutesOf, lessonEnd, formatHM, formatShortHours, clock, typeOf };
 })();
