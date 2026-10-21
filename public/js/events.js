@@ -395,10 +395,48 @@
     return `${t.brutto_min}/${t.netto_min} min pro 30 min · 1 h = ${formatHM(minutesOf(ev, "brutto"))} brutto · ${formatHM(minutesOf(ev, "netto"))} netto`;
   }
 
+  // Sortierung der Typenliste (Klick auf Spaltenkopf, wird im Browser gemerkt)
+  let typeSort = { key: "code", dir: 1 };
+  try {
+    typeSort = JSON.parse(localStorage.getItem("academy.typeSort")) || typeSort;
+  } catch {}
+
+  const naturally = new Intl.Collator("de", { numeric: true, sensitivity: "base" });
+  const SORT_VALUES = {
+    code: (t) => t.code,
+    name: (t) => t.name,
+    time: (t) => t.fixed_start_min,
+    terms: (t) => t.series_offsets.length,
+  };
+
+  function sortedTypes() {
+    const value = SORT_VALUES[typeSort.key] || SORT_VALUES.code;
+    return [...data.types].sort((a, b) => {
+      const va = value(a);
+      const vb = value(b);
+      // Leere Werte (z. B. ohne ID oder ohne feste Zeit) immer ans Ende
+      if (va == null || vb == null) return va == null && vb == null ? naturally.compare(a.name, b.name) : va == null ? 1 : -1;
+      const diff = typeof va === "number" ? va - vb : naturally.compare(va, vb);
+      return diff * typeSort.dir || naturally.compare(a.name, b.name);
+    });
+  }
+
+  function setTypeSort(key) {
+    typeSort = { key, dir: typeSort.key === key ? -typeSort.dir : 1 };
+    try {
+      localStorage.setItem("academy.typeSort", JSON.stringify(typeSort));
+    } catch {}
+    renderTypes();
+  }
+
   function renderTypes() {
     const tbody = $("#type-list");
     tbody.replaceChildren();
-    for (const t of data.types) {
+    document.querySelectorAll("#type-head th[data-sort]").forEach((th) => {
+      th.classList.toggle("sorted", th.dataset.sort === typeSort.key);
+      th.dataset.dir = th.dataset.sort === typeSort.key ? (typeSort.dir > 0 ? "asc" : "desc") : "";
+    });
+    for (const t of sortedTypes()) {
       const tr = el("tr");
       const name = el("td");
       const dot = el("span", "gdot");
@@ -477,6 +515,10 @@
 
   function init(context) {
     ctx = context;
+    document.querySelectorAll("#type-head th[data-sort]").forEach((th) => {
+      th.title = "Sortieren";
+      th.addEventListener("click", () => setTypeSort(th.dataset.sort));
+    });
 
     const ef = $("#event-form");
     ef.elements.type_id.addEventListener("change", () => applyType({ adjustDate: true }));

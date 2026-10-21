@@ -360,6 +360,12 @@ table.t td:last-child { text-align: right; }
 .vsep { width: 1px; height: 24px; background: var(--line-2); }
 .stack { margin-bottom: 14px; }
 .stack > .hd { flex-wrap: wrap; }
+table.t th[data-sort] { cursor: pointer; user-select: none; }
+table.t th[data-sort]:hover { color: var(--ink); }
+table.t th[data-sort]::after { content: "↕"; margin-left: 4px; opacity: .3; font-size: 11px; }
+table.t th.sorted { color: var(--ink); }
+table.t th.sorted[data-dir="asc"]::after { content: "↑"; opacity: .8; }
+table.t th.sorted[data-dir="desc"]::after { content: "↓"; opacity: .8; }
 table.t th.num, table.t td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 table.t td.muted { color: var(--ink-3); }
 table.t td.tab { font-variant-numeric: tabular-nums; white-space: nowrap; }
