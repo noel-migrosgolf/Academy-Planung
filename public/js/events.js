@@ -45,6 +45,10 @@
     return Math.min(ev.end_min, Math.round(ev.start_min + minutesOf(ev, "netto")));
   }
 
+  function timesText(t) {
+    return t.series_times.map(([a, b]) => `${clock(a)}–${clock(b)}`).join(" · ");
+  }
+
   // Alle Termine derselben Serie, sortiert
   function seriesOf(ev) {
     if (!ev.series_id) return [ev];
@@ -142,9 +146,10 @@
     const dates = [];
     t.series_offsets.forEach((offset, i) => {
       const date = first ? D.addDays(first, offset) : null;
-      dates.push(date ? shortDate(date) : "–");
+      const time = t.series_times ? ` ${clock(t.series_times[i][0])}` : "";
+      dates.push(date ? `${shortDate(date)}${time}` : "–");
       const row = el("div", "series-row");
-      row.append(el("span", "n", `Termin ${i + 1}`), el("span", "d", date ? shortDate(date) : "–"));
+      row.append(el("span", "n", `Termin ${i + 1}`), el("span", "d", date ? `${shortDate(date)}${time}` : "–"));
       const select = el("select", "fsel");
       select.append(new Option(`wie oben (${proName(Number(f.pro_id.value))})`, ""));
       for (const p of data.pros) select.append(new Option(p.name, String(p.id)));
@@ -203,6 +208,9 @@
     f.start.disabled = locked;
     f.end.disabled = locked;
     $("#event-fixed-hint").hidden = !fixed || !!editingEvent?.series_id;
+    $("#event-fixed-hint").textContent = t.series_times
+      ? `Die Zeiten sind je Termin fest vorgegeben: ${timesText(t)} (inkl. Puffer am Ende).`
+      : "Die Zeit ist durch den Event-Typ fest vorgegeben (inkl. Puffer am Ende).";
 
     // Beim Wechsel auf einen Typ mit festem Wochentag zum nächsten passenden Tag springen
     if (adjustDate && t.first_weekday !== null && f.date.value) {
@@ -313,6 +321,7 @@
     $("#type-pauschal").hidden = !pauschal;
     const offsets = parseOffsets(f.series_offsets.value);
     const weekday = f.first_weekday.value === "" ? null : Number(f.first_weekday.value);
+    $("#type-times-row").hidden = !(offsets && offsets.length > 1) && !f.series_times.value;
     $("#type-pattern").textContent = offsets
       ? offsets.length > 1
         ? `→ ${offsets.length} Termine${weekday === null ? "" : `: ${offsets.map((o) => D.WEEKDAYS[(weekday + o) % 7]).join(", ")}`}`
@@ -348,6 +357,7 @@
     f.fixed_end.value = type?.fixed_end_min != null ? clock(type.fixed_end_min) : "";
     f.first_weekday.value = type?.first_weekday != null ? String(type.first_weekday) : "";
     f.series_offsets.value = (type?.series_offsets || [0]).join(", ");
+    f.series_times.value = type?.series_times ? type.series_times.map(([a, b]) => `${clock(a)}-${clock(b)}`).join(", ") : "";
     updateTypeForm();
     $("#dlg-type").showModal();
   }
@@ -369,6 +379,7 @@
       fixed_end_min: f.fixed_end.value ? parseClock(f.fixed_end.value) : null,
       first_weekday: f.first_weekday.value === "" ? null : Number(f.first_weekday.value),
       series_offsets: offsets,
+      series_times: f.series_times.value.trim() ? f.series_times.value.split(/\s*[,;]\s*/).filter(Boolean) : null,
     };
   }
 
@@ -392,7 +403,9 @@
       dot.style.background = t.color;
       name.append(dot, document.createTextNode(t.name));
       const booked = t.fixed_start_min !== null ? bookedEnd(t, t.fixed_start_min, t.fixed_end_min) : null;
-      const time = t.fixed_start_min === null
+      const time = t.series_times
+        ? `je Termin ${timesText(t)}`
+        : t.fixed_start_min === null
         ? "frei wählbar"
         : `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}${booked > t.fixed_end_min ? `, Puffer bis ${clock(booked)}` : ""}`;
       const terms = isSeriesType(t) ? `${t.series_offsets.length} (${patternText(t)})` : t.first_weekday !== null ? `1 (${D.WEEKDAYS[t.first_weekday]})` : "1";
@@ -509,7 +522,7 @@
     });
 
     const tf = $("#type-form");
-    ["calc", "series_offsets", "first_weekday"].forEach((n) => tf.elements[n].addEventListener("input", updateTypeForm));
+    ["calc", "series_offsets", "series_times", "first_weekday"].forEach((n) => tf.elements[n].addEventListener("input", updateTypeForm));
     tf.addEventListener("submit", async (e) => {
       e.preventDefault();
       try {

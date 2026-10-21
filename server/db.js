@@ -104,7 +104,8 @@ async function migrate() {
       ADD COLUMN IF NOT EXISTS fixed_start_min INTEGER,
       ADD COLUMN IF NOT EXISTS fixed_end_min   INTEGER,
       ADD COLUMN IF NOT EXISTS first_weekday   INTEGER,
-      ADD COLUMN IF NOT EXISTS series_offsets  INTEGER[] NOT NULL DEFAULT '{0}';
+      ADD COLUMN IF NOT EXISTS series_offsets  INTEGER[] NOT NULL DEFAULT '{0}',
+      ADD COLUMN IF NOT EXISTS series_times    JSONB;
     ALTER TABLE events
       ADD COLUMN IF NOT EXISTS series_id    TEXT,
       ADD COLUMN IF NOT EXISTS series_index INTEGER;

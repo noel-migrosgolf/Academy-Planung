@@ -464,12 +464,17 @@ fieldset > .btn { align-self: flex-start; }
 @keyframes ai-pulse { 0%, 100% { box-shadow: 0 0 14px -2px var(--ai-glow), 0 0 0 0 rgba(255, 79, 163, 0); } 50% { box-shadow: 0 0 22px 0 var(--ai-glow), 0 0 0 3px rgba(255, 79, 163, .12); } }
 @keyframes ai-shimmer { to { background-position: -200% 0; } }
 .nav button.nav-ai {
-  color: #fff; font-weight: 650; background: var(--ai-grad); background-size: 220% 220%; border: 0; margin-bottom: 8px;
-  animation: ai-flow 8s ease infinite, ai-pulse 3.2s ease-in-out infinite;
+  --ai-inner: var(--shell);
+  color: var(--ink); font-weight: 600; margin-bottom: 8px; border: 1.5px solid transparent;
+  background: linear-gradient(var(--ai-inner), var(--ai-inner)) padding-box, var(--ai-grad) border-box;
+  background-size: 100% 100%, 220% 220%;
+  animation: ai-border-flow 8s ease infinite, ai-glow 3.2s ease-in-out infinite;
 }
-.nav button.nav-ai svg { stroke: none; filter: drop-shadow(0 0 4px rgba(255, 255, 255, .7)); }
-.nav button.nav-ai:hover { color: #fff; background: var(--ai-grad); background-size: 220% 220%; filter: brightness(1.08) saturate(1.1); }
-.nav button.nav-ai.on { color: #fff; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px #9b5cff, 0 0 26px var(--ai-glow); animation: ai-flow 8s ease infinite; }
+.nav button.nav-ai svg { color: #9b5cff; }
+.nav button.nav-ai:hover { --ai-inner: var(--surface-2); color: var(--ink); }
+.nav button.nav-ai.on { --ai-inner: var(--surface); color: var(--ink); font-weight: 650; }
+@keyframes ai-border-flow { 0%, 100% { background-position: 0 0, 0% 50%; } 50% { background-position: 0 0, 100% 50%; } }
+@keyframes ai-glow { 0%, 100% { box-shadow: 0 0 6px -2px var(--ai-glow); } 50% { box-shadow: 0 0 12px -2px var(--ai-glow); } }
 .ai-text { background: var(--ai-grad); background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent; }
 .ai-text.shimmer { background-image: linear-gradient(90deg, #9b5cff, #ff4fa3, #4f7cff, #9b5cff); background-size: 200% auto; animation: ai-shimmer 1.6s linear infinite; font-weight: 600; }
 .btn.ai-btn { background: var(--ai-grad); background-size: 200% 200%; border: 0; color: #fff; width: 40px; height: 40px; padding: 0; border-radius: 10px; animation: ai-flow 8s ease infinite; box-shadow: 0 4px 16px -4px var(--ai-glow); }

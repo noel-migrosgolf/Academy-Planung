@@ -126,7 +126,9 @@ async function overview({ from, to, pro } = {}, db = pool) {
       stunden: t.calc === "pauschal"
         ? `pro Termin ${t.brutto_fix_min / 60} h brutto, ${t.netto_fix_min / 60} h netto`
         : `${t.brutto_min}/${t.netto_min} min brutto/netto pro 30 min`,
-      zeit: t.fixed_start_min !== null ? `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}` : "frei",
+      zeit: t.series_times
+        ? `je Termin ${t.series_times.map(([a, b]) => `${clock(a)}–${clock(b)}`).join(", ")}`
+        : t.fixed_start_min !== null ? `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}` : "frei",
       erster_wochentag: t.first_weekday !== null ? eventsData.WEEKDAYS[t.first_weekday] : null,
       termine_tage_ab_start: t.series_offsets,
     })),

@@ -11,6 +11,8 @@
 //   first_weekday                 – erster Termin nur an diesem Wochentag (0 = Mo … 6 = So)
 //   series_offsets                – Serie: Tage nach dem ersten Termin, z. B. [0, 1, 7, 8]
 //                                   = Sa, darauf folgender So, nächster Sa, nächster So
+//   series_times                  – Serie: eigene Zeit je Termin, z. B. [[840, 990], [600, 750], [840, 990]]
+//                                   (dann sind auch mehrere Termine am selben Tag möglich)
 
 const crypto = require("crypto");
 
@@ -39,7 +41,7 @@ const SEED_SERIES_TYPES = [
 
 const TYPE_COLUMNS = [
   "name", "color", "calc", "brutto_min", "netto_min", "brutto_fix_min", "netto_fix_min",
-  "fixed_start_min", "fixed_end_min", "first_weekday", "series_offsets",
+  "fixed_start_min", "fixed_end_min", "first_weekday", "series_offsets", "series_times",
 ];
 
 class ValidationError extends Error {}
@@ -98,16 +100,45 @@ function normalizeType(body) {
   t.series_offsets = offsets.map((o) => int(o, "Abstand der Termine (Tage)", 0, 365));
   if (t.series_offsets[0] !== 0) throw new ValidationError("Der erste Termin hat immer den Abstand 0.");
   if (t.series_offsets.length > 20) throw new ValidationError("Höchstens 20 Termine pro Serie.");
+
+  t.series_times = seriesTimes(body.series_times, t.series_offsets.length);
+  if (t.series_times) [t.fixed_start_min, t.fixed_end_min] = t.series_times[0];
+
+  // Mehrere Termine am selben Tag nur mit eigener Zeit je Termin
   for (let i = 1; i < t.series_offsets.length; i++) {
-    if (t.series_offsets[i] <= t.series_offsets[i - 1]) {
-      throw new ValidationError("Die Abstände der Termine müssen aufsteigend sein.");
+    const same = t.series_offsets[i] === t.series_offsets[i - 1];
+    if (t.series_offsets[i] < t.series_offsets[i - 1] || (same && !t.series_times)) {
+      throw new ValidationError("Die Abstände der Termine müssen aufsteigend sein (gleicher Tag nur mit eigener Zeit je Termin).");
+    }
+    if (same && t.series_times[i][0] < t.series_times[i - 1][1]) {
+      throw new ValidationError(`Termin ${i + 1} liegt am selben Tag wie Termin ${i} und muss danach beginnen.`);
     }
   }
   return t;
 }
 
+// Zeit je Termin: [[Beginn, Ende], …] oder ["HH:MM-HH:MM", …]; leer = keine
+function seriesTimes(value, count) {
+  if (empty(value) || (Array.isArray(value) && !value.length)) return null;
+  if (!Array.isArray(value)) throw new ValidationError("Zeit pro Termin: ungültige Angabe.");
+  if (count < 2) throw new ValidationError("Zeit pro Termin gibt es nur bei Serien mit mehreren Terminen.");
+  if (value.length !== count) {
+    throw new ValidationError(`Zeit pro Termin: bitte genau ${count} Zeiten angeben (eine pro Termin).`);
+  }
+  return value.map((v, i) => {
+    const pair = typeof v === "string" ? v.split(/\s*[-–]\s*/) : v;
+    if (!Array.isArray(pair) || pair.length !== 2) {
+      throw new ValidationError(`Zeit pro Termin ${i + 1}: bitte als «HH:MM-HH:MM» angeben.`);
+    }
+    const start = minutes(pair[0], `Termin ${i + 1} Beginn`);
+    const end = minutes(pair[1], `Termin ${i + 1} Ende`);
+    if (end <= start) throw new ValidationError(`Termin ${i + 1}: Das Ende muss nach dem Beginn liegen.`);
+    return [start, end];
+  });
+}
+
 function typeValues(t) {
-  return TYPE_COLUMNS.map((c) => t[c]);
+  return TYPE_COLUMNS.map((c) => (c === "series_times" && t[c] ? JSON.stringify(t[c]) : t[c]));
 }
 
 function addDays(iso, days) {
@@ -140,8 +171,10 @@ function bookedEnd(type, start, end) {
   return Math.min(24 * 60, Math.max(end, start + type.brutto_fix_min));
 }
 
-// Uhrzeit eines Termins: feste Zeit des Typs oder die Eingabe
-function times(type, body) {
+// Uhrzeit eines Termins: Zeit je Termin, feste Zeit des Typs oder die Eingabe
+function times(type, body, index = 0) {
+  const own = type.series_times?.[index];
+  if (own) return { start_min: own[0], end_min: bookedEnd(type, own[0], own[1]) };
   if (type.fixed_start_min !== null) {
     return { start_min: type.fixed_start_min, end_min: bookedEnd(type, type.fixed_start_min, type.fixed_end_min) };
   }
@@ -153,14 +186,17 @@ function times(type, body) {
 
 // Gleicht bestehende Events von Typen mit fester Zeit an die Typ-Einstellungen an
 // (z. B. nach einer Änderung der Zeit oder der Brutto-Stunden). $1 = Typ-ID oder NULL für alle.
+// Bei Zeit je Termin gilt die Zeit des jeweiligen Termins (series_index).
 const SYNC_FIXED_EVENTS_SQL = `
   UPDATE events e
-     SET start_min = t.fixed_start_min,
-         end_min = CASE WHEN t.calc = 'pauschal'
-                        THEN LEAST(1440, GREATEST(t.fixed_end_min, t.fixed_start_min + t.brutto_fix_min))
-                        ELSE t.fixed_end_min END
-    FROM event_types t
-   WHERE e.type_id = t.id AND t.fixed_start_min IS NOT NULL AND ($1::int IS NULL OR t.id = $1)`;
+     SET start_min = x.s,
+         end_min = CASE WHEN x.calc = 'pauschal' THEN LEAST(1440, GREATEST(x.en, x.s + x.brutto_fix_min)) ELSE x.en END
+    FROM (SELECT ev.id, t.calc, t.brutto_fix_min,
+                 coalesce((t.series_times -> (ev.series_index - 1) ->> 0)::int, t.fixed_start_min) AS s,
+                 coalesce((t.series_times -> (ev.series_index - 1) ->> 1)::int, t.fixed_end_min) AS en
+            FROM events ev JOIN event_types t ON t.id = ev.type_id
+           WHERE t.fixed_start_min IS NOT NULL AND ($1::int IS NULL OR t.id = $1)) x
+   WHERE e.id = x.id`;
 
 // Neues Event bzw. neue Serie: berechnet alle Termine aus Typ und Eingabe.
 // body.pros (optional) wählt pro Termin einen eigenen Pro, sonst gilt body.pro_id.
@@ -169,7 +205,6 @@ function planNew(type, body) {
   if (type.first_weekday !== null && weekdayOf(date) !== type.first_weekday) {
     throw new ValidationError(`«${type.name}» beginnt immer an einem ${WEEKDAYS[type.first_weekday]}.`);
   }
-  const { start_min, end_min } = times(type, body);
   const offsets = type.series_offsets;
   const pros = Array.isArray(body.pros) ? body.pros : [];
   const fallback = empty(body.pro_id) ? null : body.pro_id;
@@ -180,8 +215,7 @@ function planNew(type, body) {
     type_id: type.id,
     pro_id: id(empty(pros[i]) ? fallback : pros[i], offsets.length > 1 ? `Pro für Termin ${i + 1}` : "Pro"),
     date: addDays(date, offset),
-    start_min,
-    end_min,
+    ...times(type, body, i),
     notiz,
     series_id: seriesId,
     series_index: seriesId ? i + 1 : null,
