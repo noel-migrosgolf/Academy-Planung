@@ -4,106 +4,145 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Academy Planung</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f6b4f'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='700' font-size='18' fill='white' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M11 26V6l11 5-11 5' fill='none' stroke='white' stroke-width='2.6' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <script>
+    // Gespeichertes Farbschema vor dem ersten Rendern setzen (verhindert Flackern).
+    try {
+      const theme = localStorage.getItem("academy.theme");
+      if (theme) document.documentElement.dataset.theme = theme;
+    } catch {}
+  </script>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">A</span>
-      <div>
-        <div class="brand-name">Academy Holzhäusern</div>
-        <div class="brand-sub">Planungstool</div>
+  <div id="app" class="app guest">
+    <header class="top">
+      <div class="brand">
+        <div class="mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V3l11 4.5L6 12"/><circle cx="15" cy="19" r="2"/></svg>
+        </div>
+        <div><b>Academy Holzhäusern</b><span>Planungstool</span></div>
       </div>
-    </div>
-    <div class="topbar-actions">
-      <span id="session-info" class="session-info" hidden></span>
-      <button id="btn-users" class="btn btn-ghost" hidden>Benutzer</button>
-      <button id="btn-admin" class="btn btn-ghost">Admin</button>
-      <button id="btn-logout" class="btn btn-ghost" hidden>Abmelden</button>
-    </div>
-  </header>
+      <div class="spacer"></div>
+      <span id="session-info" class="user-chip" hidden>
+        <i id="session-avatar"></i><span id="session-name"></span>
+      </span>
+      <button id="btn-admin" class="btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/></svg>
+        <span class="lbl">Admin</span>
+      </button>
+      <button id="btn-logout" class="btn" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/></svg>
+        <span class="lbl">Abmelden</span>
+      </button>
+      <button id="btn-theme" class="btn icon ghost" title="Hell/Dunkel" aria-label="Darstellung wechseln">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
+      </button>
+    </header>
 
-  <!-- Login -->
-  <main id="view-login" class="view view-center">
-    <form id="login-form" class="card login-card" autocomplete="on">
-      <h1>Anmelden</h1>
-      <p class="muted">Melde dich mit deinem Benutzerkonto an.</p>
-      <label>Benutzername
-        <input name="username" type="text" autocomplete="username" required>
-      </label>
-      <label>Passwort
-        <input name="password" type="password" autocomplete="current-password" required>
-      </label>
-      <p class="form-error" role="alert"></p>
-      <button class="btn btn-primary btn-block" type="submit">Anmelden</button>
-    </form>
-  </main>
+    <nav class="side nav" aria-label="Navigation" hidden>
+      <button data-page="calendar" class="on">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+        Kalender
+      </button>
+      <button data-page="users" data-admin hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.4 3.4-5.5 6.5-5.5s5.7 2.1 6.5 5.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16.5 14.6c2.6-.3 4.6 1.4 5.2 4.4"/></svg>
+        Benutzer
+      </button>
+      <div class="foot">Academy Holzhäusern<br>Planungstool</div>
+    </nav>
 
-  <!-- Kalender -->
-  <main id="view-calendar" class="view" hidden>
-    <div class="page-head">
-      <div>
-        <h1>Jahreskalender <span id="cal-year"></span></h1>
-        <p class="muted">Schulferien und schulfreie Tage Kanton Zug</p>
-      </div>
-      <div class="legend-keys">
-        <span class="key ferien">Schulferien</span>
-        <span class="key feiertag">Schulfreier Tag</span>
-        <span class="key weekend">Wochenende</span>
-      </div>
-    </div>
-    <div class="calendar-layout">
-      <div id="calendar" class="calendar"></div>
-      <aside class="card legend">
-        <h2>Ferien &amp; Feiertage</h2>
-        <div id="legend"></div>
-      </aside>
-    </div>
-  </main>
+    <main class="main">
+      <!-- Login -->
+      <section id="view-login" class="login" hidden>
+        <form id="login-form" class="card login-card" autocomplete="on">
+          <div class="hd"><h3>Anmelden</h3></div>
+          <div class="bd form">
+            <p class="lead">Melde dich mit deinem Benutzerkonto an.</p>
+            <label>Benutzername
+              <input name="username" type="text" autocomplete="username" required>
+            </label>
+            <label>Passwort
+              <input name="password" type="password" autocomplete="current-password" required>
+            </label>
+            <p class="form-error" role="alert"></p>
+            <button class="btn primary block" type="submit">Anmelden</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Kalender -->
+      <section id="page-calendar" class="page" hidden>
+        <h1>Kalender <span id="cal-year"></span></h1>
+        <p class="lead">Jahresübersicht mit den Schulferien und schulfreien Tagen des Kantons Zug.</p>
+        <div class="legend">
+          <span><i class="sw fer"></i>Schulferien</span>
+          <span><i class="sw hol"></i>Schulfreier Tag</span>
+          <span><i class="sw today"></i>Heute</span>
+        </div>
+        <div class="cal-layout">
+          <div id="calendar" class="calendar"></div>
+          <aside class="card cal-side">
+            <div class="hd"><h3>Ferien &amp; Feiertage</h3><span class="sub">Kanton Zug</span></div>
+            <div class="bd" id="legend"></div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- Benutzerverwaltung (Admin) -->
+      <section id="page-users" class="page" hidden>
+        <h1>Benutzer</h1>
+        <p class="lead">Benutzerkonten für das Planungstool anlegen und verwalten.</p>
+        <div class="users-layout">
+          <form id="user-form" class="card">
+            <div class="hd"><h3>Neuer Benutzer</h3></div>
+            <div class="bd form">
+              <label>Name
+                <input name="name" type="text" required>
+              </label>
+              <label>Benutzername
+                <input name="username" type="text" autocomplete="off" required>
+              </label>
+              <label>Passwort
+                <input name="password" type="password" autocomplete="new-password" minlength="6" required>
+              </label>
+              <p class="form-error" role="alert"></p>
+              <button class="btn primary block" type="submit">Benutzer anlegen</button>
+            </div>
+          </form>
+          <div class="card">
+            <div class="hd"><h3>Alle Benutzer</h3><span class="sub" id="user-count"></span></div>
+            <table class="t">
+              <thead>
+                <tr><th>Name</th><th>Benutzername</th><th>Erstellt</th><th></th></tr>
+              </thead>
+              <tbody id="user-list"></tbody>
+            </table>
+            <p id="user-empty" class="empty">Noch keine Benutzer angelegt.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
 
   <!-- Admin-Login -->
   <dialog id="dlg-admin-login" class="dialog">
-    <form id="admin-login-form" method="dialog">
-      <h2>Admin-Bereich</h2>
-      <label>Admin-Passwort
-        <input name="password" type="password" autocomplete="off" required autofocus>
-      </label>
-      <p class="form-error" role="alert"></p>
-      <div class="dialog-actions">
-        <button class="btn btn-ghost" type="button" data-close>Abbrechen</button>
-        <button class="btn btn-primary" type="submit">Weiter</button>
+    <form id="admin-login-form" class="card">
+      <div class="hd"><h3>Admin-Bereich</h3></div>
+      <div class="bd form">
+        <label>Admin-Passwort
+          <input name="password" type="password" autocomplete="off" required autofocus>
+        </label>
+        <p class="form-error" role="alert"></p>
+        <div class="actions">
+          <button class="btn" type="button" data-close>Abbrechen</button>
+          <button class="btn primary" type="submit">Weiter</button>
+        </div>
       </div>
     </form>
   </dialog>
 
-  <!-- Benutzerverwaltung -->
-  <dialog id="dlg-users" class="dialog dialog-wide">
-    <div class="dialog-head">
-      <h2>Benutzerverwaltung</h2>
-      <button class="btn btn-icon" type="button" data-close aria-label="Schliessen">×</button>
-    </div>
-    <form id="user-form" class="user-form">
-      <label>Name
-        <input name="name" type="text" required>
-      </label>
-      <label>Benutzername
-        <input name="username" type="text" autocomplete="off" required>
-      </label>
-      <label>Passwort
-        <input name="password" type="password" autocomplete="new-password" minlength="6" required>
-      </label>
-      <button class="btn btn-primary" type="submit">Benutzer anlegen</button>
-      <p class="form-error" role="alert"></p>
-    </form>
-    <table class="user-table">
-      <thead>
-        <tr><th>Name</th><th>Benutzername</th><th>Erstellt</th><th></th></tr>
-      </thead>
-      <tbody id="user-list"></tbody>
-    </table>
-    <p id="user-empty" class="muted">Noch keine Benutzer angelegt.</p>
-  </dialog>
+  <div id="toast" class="toast" role="status"></div>
 
   <script src="js/ferien.js"></script>
   <script src="js/calendar.js"></script>

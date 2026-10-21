@@ -1,16 +1,17 @@
 (function () {
   const YEAR = 2027;
   const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => document.querySelectorAll(sel);
 
-  const views = { login: $("#view-login"), calendar: $("#view-calendar") };
+  const app = $("#app");
+  const side = $(".side");
   const btnAdmin = $("#btn-admin");
-  const btnUsers = $("#btn-users");
   const btnLogout = $("#btn-logout");
-  const sessionInfo = $("#session-info");
   const dlgAdminLogin = $("#dlg-admin-login");
-  const dlgUsers = $("#dlg-users");
+  const pages = { calendar: $("#page-calendar"), users: $("#page-users") };
 
   let session = null;
+  let currentPage = "calendar";
 
   async function api(path, { method = "GET", body } = {}) {
     const res = await fetch(`/api${path}`, {
@@ -28,24 +29,71 @@
     form.querySelector(".form-error").textContent = message || "";
   }
 
-  function render() {
-    views.login.hidden = !!session;
-    views.calendar.hidden = !session;
-    btnLogout.hidden = !session;
-    sessionInfo.hidden = !session;
-    btnUsers.hidden = session?.role !== "admin";
-    btnAdmin.hidden = !!session;
+  let toastTimer;
+  function toast(message) {
+    const el = $("#toast");
+    el.textContent = message;
+    el.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("on"), 2400);
+  }
 
-    if (session) {
-      sessionInfo.textContent = session.name;
+  function initials(name) {
+    return name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join("");
+  }
+
+  // Theme (hell/dunkel)
+  $("#btn-theme").addEventListener("click", () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme
+      ? root.dataset.theme === "dark"
+      : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    try {
+      localStorage.setItem("academy.theme", root.dataset.theme);
+    } catch {}
+  });
+
+  function showPage(name) {
+    if (name === "users" && session?.role !== "admin") name = "calendar";
+    currentPage = name;
+    for (const [key, el] of Object.entries(pages)) el.hidden = key !== name;
+    $$(".nav button[data-page]").forEach((b) => b.classList.toggle("on", b.dataset.page === name));
+    if (name === "calendar") {
       $("#cal-year").textContent = YEAR;
       Calendar.render($("#calendar"), $("#legend"), YEAR, window.FERIEN_ZUG);
     }
+    if (name === "users") loadUsers();
   }
 
-  async function renderUsers() {
-    const { users } = await api("/users");
+  function render() {
+    const loggedIn = !!session;
+    app.classList.toggle("guest", !loggedIn);
+    side.hidden = !loggedIn;
+    $("#view-login").hidden = loggedIn;
+    $("#session-info").hidden = !loggedIn;
+    btnLogout.hidden = !loggedIn;
+    btnAdmin.hidden = loggedIn;
+    $$("[data-admin]").forEach((el) => (el.hidden = session?.role !== "admin"));
+
+    if (loggedIn) {
+      $("#session-name").textContent = session.name;
+      $("#session-avatar").textContent = initials(session.name);
+      showPage(currentPage);
+    } else {
+      for (const el of Object.values(pages)) el.hidden = true;
+    }
+  }
+
+  async function loadUsers() {
     const tbody = $("#user-list");
+    let users;
+    try {
+      ({ users } = await api("/users"));
+    } catch (err) {
+      toast(err.message);
+      return;
+    }
     tbody.replaceChildren();
     for (const user of users) {
       const tr = document.createElement("tr");
@@ -57,31 +105,31 @@
       }
       const actions = document.createElement("td");
       const del = document.createElement("button");
-      del.className = "btn btn-danger btn-sm";
+      del.className = "btn sm danger";
       del.textContent = "Löschen";
       del.addEventListener("click", async () => {
-        if (confirm(`Benutzer «${user.username}» wirklich löschen?`)) {
+        if (!confirm(`Benutzer «${user.username}» wirklich löschen?`)) return;
+        try {
           await api(`/users/${user.id}`, { method: "DELETE" });
-          renderUsers();
+          toast(`Benutzer «${user.username}» gelöscht`);
+          loadUsers();
+        } catch (err) {
+          toast(err.message);
         }
       });
       actions.appendChild(del);
       tr.appendChild(actions);
       tbody.appendChild(tr);
     }
+    $("#user-count").textContent = `${users.length} ${users.length === 1 ? "Eintrag" : "Einträge"}`;
     $("#user-empty").hidden = users.length > 0;
-    $(".user-table").hidden = users.length === 0;
+    $("#page-users table").hidden = users.length === 0;
   }
 
-  async function openUsers() {
-    showError($("#user-form"));
-    dlgUsers.showModal();
-    try {
-      await renderUsers();
-    } catch (err) {
-      showError($("#user-form"), err.message);
-    }
-  }
+  // Navigation
+  $$(".nav button[data-page]").forEach((btn) =>
+    btn.addEventListener("click", () => showPage(btn.dataset.page))
+  );
 
   // Login
   $("#login-form").addEventListener("submit", async (e) => {
@@ -94,6 +142,7 @@
       }));
       form.reset();
       showError(form);
+      currentPage = "calendar";
       render();
     } catch (err) {
       showError(form, err.message);
@@ -117,20 +166,18 @@
         body: { password: form.password.value },
       }));
       dlgAdminLogin.close();
+      currentPage = "users";
       render();
-      openUsers();
     } catch (err) {
       showError(form, err.message);
     }
   });
 
-  btnUsers.addEventListener("click", openUsers);
-
   $("#user-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const form = e.currentTarget;
     try {
-      await api("/users", {
+      const { user } = await api("/users", {
         method: "POST",
         body: {
           name: form.elements.name.value,
@@ -140,7 +187,8 @@
       });
       form.reset();
       showError(form);
-      renderUsers();
+      toast(`Benutzer «${user.username}» angelegt`);
+      loadUsers();
     } catch (err) {
       showError(form, err.message);
     }
@@ -149,10 +197,11 @@
   btnLogout.addEventListener("click", async () => {
     await api("/logout", { method: "POST" }).catch(() => {});
     session = null;
+    currentPage = "calendar";
     render();
   });
 
-  document.querySelectorAll("[data-close]").forEach((btn) =>
+  $$("[data-close]").forEach((btn) =>
     btn.addEventListener("click", () => btn.closest("dialog").close())
   );
 

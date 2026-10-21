@@ -52,7 +52,7 @@
   }
 
   function renderMonth(year, month, holidays, todayKey) {
-    const card = el("section", "month");
+    const card = el("section", "card month");
     card.appendChild(el("h3", "month-title", MONTHS[month]));
 
     const grid = el("div", "month-grid");
@@ -73,7 +73,7 @@
       }
 
       if (dayNum < 1 || dayNum > daysInMonth) {
-        grid.appendChild(el("span", "day empty"));
+        grid.appendChild(el("span", "day blank"));
         continue;
       }
 
@@ -103,15 +103,17 @@
     const list = el("ul", "legend-list");
     for (const entry of entries) {
       if (parseDate(entry.end).getFullYear() < year || parseDate(entry.start).getFullYear() > year) continue;
-      const item = el("li", `legend-item ${entry.type}`);
-      item.appendChild(el("span", "legend-dot"));
-      const text = el("div", "legend-text");
-      text.appendChild(el("strong", "", entry.name));
+      const item = el("li", "legend-item");
+      const text = el("div");
+      text.appendChild(el("b", "", entry.name));
       const range = entry.start === entry.end
         ? formatDate(entry.start)
         : `${formatDate(entry.start)} – ${formatDate(entry.end)}`;
       text.appendChild(el("span", "legend-range", range));
       item.appendChild(text);
+      item.appendChild(entry.type === "ferien"
+        ? el("span", "badge fer", "Ferien")
+        : el("span", "badge hol", "Schulfrei"));
       list.appendChild(item);
     }
     return list;
