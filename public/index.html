@@ -44,6 +44,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
         Kalender
       </button>
+      <button data-page="events">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18M8 14h3v3H8z"/></svg>
+        Events
+      </button>
       <button data-page="pros">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7.5" r="3.5"/><path d="M5 20c.9-3.6 3.7-6 7-6s6.1 2.4 7 6"/></svg>
         Pros
@@ -148,11 +152,53 @@
           </div>
           <input type="date" class="fsel" aria-label="Datum wählen" data-planner="date">
           <select class="fsel" aria-label="Kalenderwoche wählen" data-planner="kw"></select>
+          <div class="vsep"></div>
+          <div class="seg" role="tablist" aria-label="Stunden" data-planner="mode" title="Welche Stunden in den Summen gezählt werden">
+            <button data-mode="brutto">Brutto</button>
+            <button data-mode="netto">Netto</button>
+          </div>
           <div class="break"></div>
           <div class="chips" data-planner="chips"></div>
         </div>
         <div class="page">
           <div class="card cal" data-planner="card"></div>
+        </div>
+      </section>
+
+      <!-- Events -->
+      <section id="page-events" class="page" hidden>
+        <div class="page-head">
+          <div>
+            <h1>Events</h1>
+            <p class="lead">Events planen und Event-Typen verwalten. Events lassen sich auch direkt im Kalender (Tagesansicht) erstellen: Zeitraum aufziehen oder klicken.</p>
+          </div>
+          <button id="btn-new-event" class="btn primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            Event erstellen
+          </button>
+        </div>
+
+        <div class="card stack">
+          <div class="hd">
+            <h3>Event-Typen</h3>
+            <span class="sub">Brutto zählt gegen die Sollstunden, Netto ist die effektive Unterrichtszeit (je pro 30 min geplanter Zeit)</span>
+            <span class="spacer"></span>
+            <button id="btn-new-type" class="btn sm" hidden>+ Neuer Typ</button>
+          </div>
+          <table class="t">
+            <thead><tr><th>Typ</th><th class="num">Brutto / 30 min</th><th class="num">Netto / 30 min</th><th>Umrechnung</th><th></th></tr></thead>
+            <tbody id="type-list"></tbody>
+          </table>
+          <p id="type-empty" class="empty">Noch keine Event-Typen.</p>
+        </div>
+
+        <div class="card stack">
+          <div class="hd"><h3>Geplante Events</h3><span class="sub" id="event-sum"></span></div>
+          <table class="t" id="event-table">
+            <thead><tr><th>Datum</th><th>Zeit</th><th>Pro</th><th>Typ</th><th class="num">Brutto</th><th class="num">Netto</th><th>Notiz</th></tr></thead>
+            <tbody id="event-list"></tbody>
+          </table>
+          <p id="event-empty" class="empty">Noch keine Events geplant.</p>
         </div>
       </section>
 
@@ -301,11 +347,84 @@
     </form>
   </dialog>
 
+  <!-- Event erstellen / bearbeiten -->
+  <dialog id="dlg-event" class="dialog">
+    <form id="event-form" class="card" novalidate>
+      <div class="hd"><h3 id="event-title">Neues Event</h3></div>
+      <div class="bd form">
+        <div class="grid2">
+          <label>Event-Typ
+            <select name="type_id" class="fsel"></select>
+          </label>
+          <label>Pro
+            <select name="pro_id" class="fsel"></select>
+          </label>
+        </div>
+        <label>Datum
+          <input name="date" type="date" required>
+        </label>
+        <div class="grid2">
+          <label>Von
+            <input name="start" type="time" step="300" required>
+          </label>
+          <label>Bis
+            <input name="end" type="time" step="300" required>
+          </label>
+        </div>
+        <div class="preview" id="event-preview"></div>
+        <label>Notiz
+          <input name="notiz" type="text" maxlength="500" placeholder="optional">
+        </label>
+        <p class="form-error" role="alert"></p>
+        <div class="actions">
+          <button class="btn danger" type="button" id="event-delete">Löschen</button>
+          <span class="spacer"></span>
+          <button class="btn" type="button" data-close>Abbrechen</button>
+          <button class="btn primary" type="submit">Speichern</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Event-Typ (Admin) -->
+  <dialog id="dlg-type" class="dialog">
+    <form id="type-form" class="card" novalidate>
+      <div class="hd"><h3 id="type-title">Neuer Event-Typ</h3></div>
+      <div class="bd form">
+        <div class="grid2 name-color">
+          <label>Name
+            <input name="name" type="text" required>
+          </label>
+          <label>Farbe
+            <input name="color" type="color">
+          </label>
+        </div>
+        <div class="grid2">
+          <label>Brutto (min pro 30 min)
+            <input name="brutto_min" type="number" min="0" max="30" step="1" required>
+          </label>
+          <label>Netto (min pro 30 min)
+            <input name="netto_min" type="number" min="0" max="30" step="1" required>
+          </label>
+        </div>
+        <p class="note">Beispiel Einzelstunde: Brutto 30, Netto 25 → 1 h geplant = 1 h brutto = 50 min netto.</p>
+        <p class="form-error" role="alert"></p>
+        <div class="actions">
+          <button class="btn danger" type="button" id="type-delete">Löschen</button>
+          <span class="spacer"></span>
+          <button class="btn" type="button" data-close>Abbrechen</button>
+          <button class="btn primary" type="submit">Speichern</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status"></div>
 
   <script src="js/ferien.js"></script>
   <script src="js/dates.js"></script>
   <script src="js/calendar.js"></script>
+  <script src="js/events.js"></script>
   <script src="js/planner.js"></script>
   <script src="js/pros.js"></script>
   <script src="js/app.js"></script>

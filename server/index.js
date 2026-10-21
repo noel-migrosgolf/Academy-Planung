@@ -3,6 +3,7 @@ const express = require("express");
 const { pool, migrate } = require("./db");
 const auth = require("./auth");
 const prosData = require("./pros");
+const eventsData = require("./events");
 
 const app = express();
 app.set("trust proxy", 1); // Render sitzt vor der App
@@ -152,6 +153,120 @@ api.put("/pros/:id", auth.requireAdmin, (req, res) =>
 
 api.delete("/pros/:id", auth.requireAdmin, async (req, res) => {
   await pool.query("DELETE FROM pros WHERE id = $1", [Number.parseInt(req.params.id, 10) || 0]);
+  res.json({ ok: true });
+});
+
+// --- Event-Typen (Vorlagen, nur Admins bearbeiten) ---
+
+const TYPE_FIELDS = "id, name, brutto_min, netto_min, color";
+
+api.get("/event-types", auth.requireLogin, async (req, res) => {
+  const { rows } = await pool.query(`SELECT ${TYPE_FIELDS} FROM event_types ORDER BY sort_order, id`);
+  res.json({ types: rows });
+});
+
+async function saveType(res, run) {
+  try {
+    const { rows } = await run();
+    if (!rows[0]) return res.status(404).json({ error: "Event-Typ nicht gefunden." });
+    res.json({ type: rows[0] });
+  } catch (err) {
+    if (err instanceof eventsData.ValidationError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+}
+
+api.post("/event-types", auth.requireAdmin, (req, res) =>
+  saveType(res, () => {
+    const t = eventsData.normalizeType(req.body);
+    return pool.query(
+      `INSERT INTO event_types (name, brutto_min, netto_min, color, sort_order)
+       VALUES ($1, $2, $3, $4, (SELECT coalesce(max(sort_order), 0) + 1 FROM event_types))
+       RETURNING ${TYPE_FIELDS}`,
+      [t.name, t.brutto_min, t.netto_min, t.color]
+    );
+  })
+);
+
+api.put("/event-types/:id", auth.requireAdmin, (req, res) =>
+  saveType(res, () => {
+    const t = eventsData.normalizeType(req.body);
+    return pool.query(
+      `UPDATE event_types SET name = $1, brutto_min = $2, netto_min = $3, color = $4
+        WHERE id = $5 RETURNING ${TYPE_FIELDS}`,
+      [t.name, t.brutto_min, t.netto_min, t.color, Number.parseInt(req.params.id, 10) || 0]
+    );
+  })
+);
+
+api.delete("/event-types/:id", auth.requireAdmin, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM event_types WHERE id = $1", [Number.parseInt(req.params.id, 10) || 0]);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === "23503") {
+      return res.status(409).json({ error: "Dieser Typ wird noch von geplanten Events verwendet und kann nicht gelöscht werden." });
+    }
+    throw err;
+  }
+});
+
+// --- Events (geplante Einsätze) ---
+
+const EVENT_FIELDS = "id, type_id, pro_id, to_char(date, 'YYYY-MM-DD') AS date, start_min, end_min, notiz";
+
+api.get("/events", auth.requireLogin, async (req, res) => {
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || "") ? req.query.from : "0001-01-01";
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || "") ? req.query.to : "9999-12-31";
+  const { rows } = await pool.query(
+    `SELECT ${EVENT_FIELDS} FROM events WHERE date BETWEEN $1 AND $2 ORDER BY date, start_min`,
+    [from, to]
+  );
+  res.json({ events: rows });
+});
+
+// Prüft Überschneidungen beim selben Pro und speichert.
+async function saveEvent(req, res, id) {
+  let ev;
+  try {
+    ev = eventsData.normalizeEvent(req.body);
+  } catch (err) {
+    if (err instanceof eventsData.ValidationError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+  const { rows: clash } = await pool.query(
+    `SELECT 1 FROM events
+      WHERE pro_id = $1 AND date = $2 AND start_min < $4 AND end_min > $3 AND id <> $5 LIMIT 1`,
+    [ev.pro_id, ev.date, ev.start_min, ev.end_min, id || 0]
+  );
+  if (clash.length) return res.status(409).json({ error: "Der Pro hat in dieser Zeit bereits ein Event." });
+
+  const params = [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz];
+  try {
+    const { rows } = id
+      ? await pool.query(
+          `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
+            WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
+          [...params, id]
+        )
+      : await pool.query(
+          `INSERT INTO events (type_id, pro_id, date, start_min, end_min, notiz, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${EVENT_FIELDS}`,
+          [...params, req.session.id || null]
+        );
+    if (!rows[0]) return res.status(404).json({ error: "Event nicht gefunden." });
+    res.status(id ? 200 : 201).json({ event: rows[0] });
+  } catch (err) {
+    if (err.code === "23503") return res.status(400).json({ error: "Pro oder Event-Typ existiert nicht." });
+    throw err;
+  }
+}
+
+api.post("/events", auth.requireLogin, (req, res) => saveEvent(req, res, null));
+api.put("/events/:id", auth.requireLogin, (req, res) => saveEvent(req, res, Number.parseInt(req.params.id, 10) || -1));
+
+api.delete("/events/:id", auth.requireLogin, async (req, res) => {
+  await pool.query("DELETE FROM events WHERE id = $1", [Number.parseInt(req.params.id, 10) || 0]);
   res.json({ ok: true });
 });
 

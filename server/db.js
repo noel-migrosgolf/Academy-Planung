@@ -1,5 +1,6 @@
 const { Pool } = require("pg");
 const pros = require("./pros");
+const events = require("./events");
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL ist nicht gesetzt.");
@@ -14,7 +15,9 @@ const pool = new Pool({
 
 // Schema wird beim Start angelegt bzw. ergänzt.
 async function migrate() {
-  const { rows: existing } = await pool.query("SELECT to_regclass('pros') IS NOT NULL AS has_pros");
+  const { rows: existing } = await pool.query(
+    "SELECT to_regclass('pros') IS NOT NULL AS has_pros, to_regclass('event_types') IS NOT NULL AS has_event_types"
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -61,6 +64,43 @@ async function migrate() {
       ADD COLUMN IF NOT EXISTS abwesenheiten           JSONB NOT NULL DEFAULT '[]',
       ADD COLUMN IF NOT EXISTS verfuegbarkeitsregel    TEXT;
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS event_types (
+      id         SERIAL PRIMARY KEY,
+      name       TEXT NOT NULL,
+      brutto_min INTEGER NOT NULL CHECK (brutto_min BETWEEN 0 AND 30),
+      netto_min  INTEGER NOT NULL CHECK (netto_min BETWEEN 0 AND 30),
+      color      TEXT NOT NULL DEFAULT '#6a8fd8',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS events (
+      id         SERIAL PRIMARY KEY,
+      type_id    INTEGER NOT NULL REFERENCES event_types(id) ON DELETE RESTRICT,
+      pro_id     INTEGER NOT NULL REFERENCES pros(id) ON DELETE CASCADE,
+      date       DATE NOT NULL,
+      start_min  INTEGER NOT NULL,
+      end_min    INTEGER NOT NULL,
+      notiz      TEXT NOT NULL DEFAULT '',
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CHECK (start_min >= 0 AND end_min <= 1440 AND end_min > start_min)
+    );
+    CREATE INDEX IF NOT EXISTS events_date_idx ON events (date);
+    CREATE INDEX IF NOT EXISTS events_pro_date_idx ON events (pro_id, date);
+  `);
+
+  // Start-Event-Typen nur beim erstmaligen Anlegen der Tabelle einfügen.
+  if (!existing[0].has_event_types) {
+    for (const [i, t] of events.SEED_TYPES.entries()) {
+      await pool.query(
+        "INSERT INTO event_types (name, brutto_min, netto_min, color, sort_order) VALUES ($1, $2, $3, $4, $5)",
+        [t.name, t.brutto_min, t.netto_min, t.color, i + 1]
+      );
+    }
+  }
+
   await pool.query("DELETE FROM sessions WHERE expires_at < now()");
 
   // Start-Pros nur beim erstmaligen Anlegen der Tabelle einfügen.

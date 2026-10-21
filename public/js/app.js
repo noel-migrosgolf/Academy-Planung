@@ -10,6 +10,7 @@
   const dlgAdminLogin = $("#dlg-admin-login");
   const pages = {
     calendar: $("#page-calendar"),
+    events: $("#page-events"),
     pros: $("#page-pros"),
     ferien: $("#page-ferien"),
     users: $("#page-users"),
@@ -23,7 +24,13 @@
   ProsPage.init({
     api,
     toast,
-    reload: () => loadPros(),
+    reload: () => loadData(),
+  });
+  Events.init({
+    api,
+    toast,
+    reload: () => loadData(),
+    isAdmin: () => session?.role === "admin",
   });
 
   async function api(path, { method = "GET", body } = {}) {
@@ -79,6 +86,7 @@
     for (const [key, el] of Object.entries(pages)) el.hidden = key !== name;
     $$(".nav button[data-page]").forEach((b) => b.classList.toggle("on", b.dataset.page === name));
     if (name === "calendar") Planner.render();
+    if (name === "events") Events.render();
     if (name === "pros") renderPros();
     if (name === "ferien") {
       $("#cal-year").textContent = YEAR;
@@ -100,7 +108,7 @@
       $("#session-name").textContent = session.name;
       $("#session-avatar").textContent = initials(session.name);
       showPage(currentPage);
-      loadPros();
+      loadData();
     } else {
       for (const el of Object.values(pages)) el.hidden = true;
       renderUserPicker();
@@ -108,14 +116,23 @@
     }
   }
 
-  async function loadPros() {
+  // Lädt Pros, Event-Typen und Events und verteilt sie an alle Ansichten.
+  async function loadData() {
+    let types;
+    let events;
     try {
-      ({ pros } = await api("/pros"));
+      [{ pros }, { types }, { events }] = await Promise.all([
+        api("/pros"),
+        api("/event-types"),
+        api(`/events?from=${YEAR}-01-01&to=${YEAR}-12-31`),
+      ]);
     } catch (err) {
       toast(err.message);
       return;
     }
-    Planner.setPros(pros);
+    const data = { pros, types, events };
+    Events.setData(data);
+    Planner.setData(data);
     if (currentPage === "pros") renderPros();
   }
 

@@ -172,7 +172,7 @@
     });
 
     $("#pro-delete").addEventListener("click", async () => {
-      if (!editing || !confirm(`Pro «${editing.name}» wirklich löschen?`)) return;
+      if (!editing || !confirm(`Pro «${editing.name}» wirklich löschen? Alle geplanten Events dieses Pros werden ebenfalls gelöscht.`)) return;
       try {
         await ctx.api(`/pros/${editing.id}`, { method: "DELETE" });
         $("#dlg-pro").close();
