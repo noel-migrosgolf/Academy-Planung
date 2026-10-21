@@ -5,17 +5,17 @@ const AVAILABILITY_RULES = ["wochenend_wechsel_AB"];
 
 // Startwerte für die bestehenden Pros (werden einmalig übernommen).
 const SEED = [
-  { code: "PYN", name: "Yannick", lektionen_jahr: 1200, bambinitraining: false, kurse: true, gce_training: true, freie_tage: ["Montag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
-  { code: "PBK", name: "Benedikt", lektionen_jahr: 1200, bambinitraining: true, kurse: true, gce_training: false, freie_tage: ["Montag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
-  { code: "PTS", name: "Thore", lektionen_jahr: 1000, bambinitraining: false, kurse: true, gce_training: true, freie_tage: [], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: "wochenend_wechsel_AB" },
-  { code: "PAS", name: "Aaron", lektionen_jahr: 1000, bambinitraining: false, kurse: true, gce_training: true, freie_tage: ["Montag", "Dienstag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
-  { code: "PJC", name: "Joseph", lektionen_jahr: 750, bambinitraining: true, kurse: true, gce_training: true, freie_tage: ["Donnerstag", "Sonntag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
-  { code: "PAE", name: "Anja", lektionen_jahr: 250, bambinitraining: true, kurse: false, gce_training: true, freie_tage: ["Mittwoch", "Samstag", "Sonntag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
-  { code: "PLW", name: "Leigh", lektionen_jahr: 1200, bambinitraining: false, kurse: true, gce_training: true, freie_tage: ["Mittwoch", "Donnerstag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
+  { code: "PYN", name: "Yannick", sollstunden: 1200, bambinitraining: false, kurse: true, gce_training: true, freie_tage: ["Montag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
+  { code: "PBK", name: "Benedikt", sollstunden: 1200, bambinitraining: true, kurse: true, gce_training: false, freie_tage: ["Montag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
+  { code: "PTS", name: "Thore", sollstunden: 1000, bambinitraining: false, kurse: true, gce_training: true, freie_tage: [], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: "wochenend_wechsel_AB" },
+  { code: "PAS", name: "Aaron", sollstunden: 1000, bambinitraining: false, kurse: true, gce_training: true, freie_tage: ["Montag", "Dienstag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
+  { code: "PJC", name: "Joseph", sollstunden: 750, bambinitraining: true, kurse: true, gce_training: true, freie_tage: ["Donnerstag", "Sonntag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
+  { code: "PAE", name: "Anja", sollstunden: 250, bambinitraining: true, kurse: false, gce_training: true, freie_tage: ["Mittwoch", "Samstag", "Sonntag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
+  { code: "PLW", name: "Leigh", sollstunden: 1200, bambinitraining: false, kurse: true, gce_training: true, freie_tage: ["Mittwoch", "Donnerstag"], auslastung_soll_prozent: 100, abwesenheiten: [], verfuegbarkeitsregel: null },
 ];
 
 const COLUMNS = [
-  "code", "name", "lektionen_jahr", "bambinitraining", "kurse", "gce_training",
+  "code", "name", "sollstunden", "bambinitraining", "kurse", "gce_training",
   "freie_tage", "auslastung_soll_prozent", "abwesenheiten", "verfuegbarkeitsregel",
 ];
 
@@ -60,7 +60,7 @@ function normalize(body) {
   return {
     code,
     name,
-    lektionen_jahr: wholeNumber(body.lektionen_jahr ?? 0, "Lektionen pro Jahr", 5000),
+    sollstunden: wholeNumber(body.sollstunden ?? 0, "Sollstunden", 5000),
     bambinitraining: body.bambinitraining === true,
     kurse: body.kurse === true,
     gce_training: body.gce_training === true,

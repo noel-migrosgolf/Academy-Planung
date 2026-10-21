@@ -40,10 +40,19 @@ async function migrate() {
     );
   `);
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false");
+  // Spalte «lektionen_jahr» heisst neu «sollstunden» (Werte bleiben erhalten).
+  await pool.query(`
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'pros' AND column_name = 'lektionen_jahr')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'pros' AND column_name = 'sollstunden') THEN
+        ALTER TABLE pros RENAME COLUMN lektionen_jahr TO sollstunden;
+      END IF;
+    END $$;
+  `);
   await pool.query(`
     ALTER TABLE pros
       ADD COLUMN IF NOT EXISTS code                    TEXT UNIQUE,
-      ADD COLUMN IF NOT EXISTS lektionen_jahr          INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS sollstunden             INTEGER NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS bambinitraining         BOOLEAN NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS kurse                   BOOLEAN NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS gce_training            BOOLEAN NOT NULL DEFAULT false,

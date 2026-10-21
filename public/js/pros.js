@@ -35,7 +35,7 @@
     const head = el("div", "pro-head");
     const title = el("div");
     title.append(el("div", "nm", pro.name));
-    title.append(el("div", "meta", `${pro.code || "–"} · ${Number(pro.lektionen_jahr).toLocaleString("de-CH")} Lektionen/Jahr`));
+    title.append(el("div", "meta", `${pro.code || "–"} · ${Number(pro.sollstunden).toLocaleString("de-CH")} Sollstunden`));
     head.append(title);
     if (isAdmin) {
       const edit = el("button", "btn sm", "Bearbeiten");
@@ -96,11 +96,11 @@
     $("#pro-edit-title").textContent = pro ? `${pro.name} bearbeiten` : "Neuer Pro";
     $("#pro-delete").hidden = !pro;
 
-    const p = pro || { name: "", code: "", lektionen_jahr: 0, auslastung_soll_prozent: 100, kurse: true, bambinitraining: false, gce_training: false, freie_tage: [], verfuegbarkeitsregel: null, abwesenheiten: [] };
+    const p = pro || { name: "", code: "", sollstunden: 0, auslastung_soll_prozent: 100, kurse: true, bambinitraining: false, gce_training: false, freie_tage: [], verfuegbarkeitsregel: null, abwesenheiten: [] };
     const f = form.elements;
     f.name.value = p.name;
     f.code.value = p.code || "";
-    f.lektionen_jahr.value = p.lektionen_jahr;
+    f.sollstunden.value = p.sollstunden;
     f.auslastung_soll_prozent.value = p.auslastung_soll_prozent;
     f.kurse.checked = p.kurse;
     f.bambinitraining.checked = p.bambinitraining;
@@ -121,7 +121,7 @@
     return {
       name: f.name.value,
       code: f.code.value,
-      lektionen_jahr: Number(f.lektionen_jahr.value),
+      sollstunden: Number(f.sollstunden.value),
       auslastung_soll_prozent: Number(f.auslastung_soll_prozent.value),
       kurse: f.kurse.checked,
       bambinitraining: f.bambinitraining.checked,
