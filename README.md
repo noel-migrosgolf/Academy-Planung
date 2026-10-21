@@ -30,6 +30,7 @@ Dann <http://localhost:3000> öffnen.
 | `EXPORT_TOKEN` | Optional: Schlüssel für den Lesezugriff auf `GET /api/export` ohne Anmeldung (Header `X-Export-Token`) |
 | `API_TOKEN` | Optional: Schlüssel für die Datenpflege über die API (Header `X-Api-Token`). Darf Pros, Event-Typen, Events und den Verlauf bearbeiten, aber keine Benutzerkonten. Löschen der Variable sperrt den Zugang sofort. |
 | `ANTHROPIC_API_KEY` | Schlüssel für den KI-Assistenten (console.anthropic.com). Ohne ihn ist der Reiter KI sichtbar, aber gesperrt. |
+| `ANTHROPIC_WORKSPACE_ID` | Nur nötig, wenn der Schlüssel keinem Workspace zugeordnet ist: ID des Workspace (Console → Settings → Workspaces, beginnt mit `wrkspc_`) |
 | `AI_MODEL` | Optional: Modell der KI, Standard `claude-opus-5-5` (günstiger: `claude-sonnet-5-5`) |
 | `AI_EFFORT` | Optional: Denkaufwand `low` (Standard, spart Tokens), `medium` oder `high` |
 | `AI_FALLBACKS` | Optional: `off` schaltet das Ausweichmodell bei abgelehnten Anfragen aus |

@@ -22,7 +22,9 @@ const LONG_CHAT_TOKENS = 100000; // ab hier Hinweis «neuer Chat spart Tokens»
 let client = null;
 function anthropic() {
   if (!process.env.ANTHROPIC_API_KEY) return null;
-  client ??= new Anthropic();
+  // Schlüssel ohne festen Workspace brauchen die Workspace-ID als Header.
+  const workspace = process.env.ANTHROPIC_WORKSPACE_ID;
+  client ??= new Anthropic(workspace ? { defaultHeaders: { "anthropic-workspace-id": workspace } } : {});
   return client;
 }
 
