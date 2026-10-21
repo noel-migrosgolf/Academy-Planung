@@ -181,12 +181,12 @@
         <div class="card stack">
           <div class="hd">
             <h3>Event-Typen</h3>
-            <span class="sub">Brutto zählt gegen die Sollstunden, Netto ist die effektive Unterrichtszeit (je pro 30 min geplanter Zeit)</span>
+            <span class="sub">Brutto zählt gegen die Sollstunden, Netto ist die effektive Unterrichtszeit</span>
             <span class="spacer"></span>
             <button id="btn-new-type" class="btn sm" hidden>+ Neuer Typ</button>
           </div>
           <table class="t">
-            <thead><tr><th>Typ</th><th class="num">Brutto / 30 min</th><th class="num">Netto / 30 min</th><th>Umrechnung</th><th></th></tr></thead>
+            <thead><tr><th>Typ</th><th>Stunden</th><th>Zeit</th><th>Termine</th><th></th></tr></thead>
             <tbody id="type-list"></tbody>
           </table>
           <p id="type-empty" class="empty">Noch keine Event-Typen.</p>
@@ -363,6 +363,7 @@
         <label>Datum
           <input name="date" type="date" required>
         </label>
+        <p class="note warn" id="event-weekday-hint" hidden></p>
         <div class="grid2">
           <label>Von
             <input name="start" type="time" step="300" required>
@@ -370,6 +371,15 @@
           <label>Bis
             <input name="end" type="time" step="300" required>
           </label>
+        </div>
+        <p class="note" id="event-fixed-hint" hidden>Die Zeit ist durch den Event-Typ fest vorgegeben.</p>
+        <p class="note" id="event-series-note" hidden>Datum und Zeit sind durch die Serie festgelegt. Pro und Notiz gelten nur für diesen Termin.</p>
+        <div class="series" id="event-series" hidden>
+          <div class="series-summary" id="event-series-summary"></div>
+          <details id="event-series-more">
+            <summary>Erweitert: anderer Pro je Termin</summary>
+            <div id="event-series-rows" class="series-rows"></div>
+          </details>
         </div>
         <div class="preview" id="event-preview"></div>
         <label>Notiz
@@ -399,15 +409,60 @@
             <input name="color" type="color">
           </label>
         </div>
+        <label>Stunden-Berechnung
+          <select name="calc" class="fsel">
+            <option value="faktor">Pro 30 min geplanter Zeit (z. B. Einzelstunde)</option>
+            <option value="pauschal">Pauschal pro Termin (z. B. Platzreife)</option>
+          </select>
+        </label>
+        <div id="type-faktor">
+          <div class="grid2">
+            <label>Brutto (min pro 30 min)
+              <input name="brutto_min" type="number" min="0" max="30" step="1">
+            </label>
+            <label>Netto (min pro 30 min)
+              <input name="netto_min" type="number" min="0" max="30" step="1">
+            </label>
+          </div>
+          <p class="note">Einzelstunde: Brutto 30, Netto 25 → 1 h geplant = 1 h brutto = 50 min netto.</p>
+        </div>
+        <div id="type-pauschal" hidden>
+          <div class="grid2">
+            <label>Brutto pro Termin (h)
+              <input name="brutto_fix" type="number" min="0" max="24" step="0.25">
+            </label>
+            <label>Netto pro Termin (h)
+              <input name="netto_fix" type="number" min="0" max="24" step="0.25">
+            </label>
+          </div>
+          <p class="note">Platzreife: 3 h brutto (zählt gegen die Sollstunden), 2.5 h netto (Unterricht).</p>
+        </div>
         <div class="grid2">
-          <label>Brutto (min pro 30 min)
-            <input name="brutto_min" type="number" min="0" max="30" step="1" required>
+          <label>Feste Zeit von (optional)
+            <input name="fixed_start" type="time" step="300">
           </label>
-          <label>Netto (min pro 30 min)
-            <input name="netto_min" type="number" min="0" max="30" step="1" required>
+          <label>bis
+            <input name="fixed_end" type="time" step="300">
           </label>
         </div>
-        <p class="note">Beispiel Einzelstunde: Brutto 30, Netto 25 → 1 h geplant = 1 h brutto = 50 min netto.</p>
+        <div class="grid2">
+          <label>Erster Termin nur am
+            <select name="first_weekday" class="fsel">
+              <option value="">beliebigen Tag</option>
+              <option value="0">Montag</option>
+              <option value="1">Dienstag</option>
+              <option value="2">Mittwoch</option>
+              <option value="3">Donnerstag</option>
+              <option value="4">Freitag</option>
+              <option value="5">Samstag</option>
+              <option value="6">Sonntag</option>
+            </select>
+          </label>
+          <label>Termine: Abstand in Tagen
+            <input name="series_offsets" type="text" placeholder="0" title="Tage nach dem ersten Termin, z. B. 0, 1, 7, 8 = Sa, So, Sa, So">
+          </label>
+        </div>
+        <p class="note" id="type-pattern"></p>
         <p class="form-error" role="alert"></p>
         <div class="actions">
           <button class="btn danger" type="button" id="type-delete">Löschen</button>

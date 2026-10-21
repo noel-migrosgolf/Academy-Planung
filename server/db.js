@@ -91,14 +91,43 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS events_pro_date_idx ON events (pro_id, date);
   `);
 
+  // Ausbau für pauschale Stunden, feste Zeiten und Serien (z. B. Platzreife).
+  const { rows: seriesCol } = await pool.query(
+    `SELECT 1 FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'event_types' AND column_name = 'series_offsets'`
+  );
+  await pool.query(`
+    ALTER TABLE event_types
+      ADD COLUMN IF NOT EXISTS calc            TEXT NOT NULL DEFAULT 'faktor',
+      ADD COLUMN IF NOT EXISTS brutto_fix_min  INTEGER,
+      ADD COLUMN IF NOT EXISTS netto_fix_min   INTEGER,
+      ADD COLUMN IF NOT EXISTS fixed_start_min INTEGER,
+      ADD COLUMN IF NOT EXISTS fixed_end_min   INTEGER,
+      ADD COLUMN IF NOT EXISTS first_weekday   INTEGER,
+      ADD COLUMN IF NOT EXISTS series_offsets  INTEGER[] NOT NULL DEFAULT '{0}';
+    ALTER TABLE events
+      ADD COLUMN IF NOT EXISTS series_id    TEXT,
+      ADD COLUMN IF NOT EXISTS series_index INTEGER;
+    CREATE INDEX IF NOT EXISTS events_series_idx ON events (series_id);
+  `);
+
+  async function insertType(seed) {
+    const t = events.normalizeType(seed);
+    const cols = events.TYPE_COLUMNS;
+    await pool.query(
+      `INSERT INTO event_types (${cols.join(", ")}, sort_order)
+       VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")}, (SELECT coalesce(max(sort_order), 0) + 1 FROM event_types))`,
+      events.typeValues(t)
+    );
+  }
+
   // Start-Event-Typen nur beim erstmaligen Anlegen der Tabelle einfügen.
   if (!existing[0].has_event_types) {
-    for (const [i, t] of events.SEED_TYPES.entries()) {
-      await pool.query(
-        "INSERT INTO event_types (name, brutto_min, netto_min, color, sort_order) VALUES ($1, $2, $3, $4, $5)",
-        [t.name, t.brutto_min, t.netto_min, t.color, i + 1]
-      );
-    }
+    for (const seed of events.SEED_TYPES) await insertType(seed);
+  }
+  // Serien-Typen einmalig beim Ausbau anlegen (später gelöschte kommen nicht zurück).
+  if (!seriesCol.length) {
+    for (const seed of events.SEED_SERIES_TYPES) await insertType(seed);
   }
 
   await pool.query("DELETE FROM sessions WHERE expires_at < now()");

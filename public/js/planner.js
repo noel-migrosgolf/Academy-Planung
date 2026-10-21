@@ -118,10 +118,12 @@
   }
 
   function eventTitle(ev) {
-    const t = E.typeOf(ev);
+    const lesson = E.lessonEnd(ev);
     const lines = [
-      `${t?.name || "Event"} · ${E.clock(ev.start_min)}–${E.clock(ev.end_min)}`,
-      `Unterricht ${E.clock(ev.start_min)}–${E.clock(E.lessonEnd(ev))} · Puffer bis ${E.clock(ev.end_min)}`,
+      `${E.eventName(ev)} · ${E.clock(ev.start_min)}–${E.clock(ev.end_min)}`,
+      lesson < ev.end_min
+        ? `Unterricht ${E.clock(ev.start_min)}–${E.clock(lesson)} · Puffer bis ${E.clock(ev.end_min)}`
+        : `Unterricht ${E.clock(ev.start_min)}–${E.clock(ev.end_min)}`,
       `Brutto ${E.formatHM(E.minutesOf(ev, "brutto"))} · Netto ${E.formatHM(E.minutesOf(ev, "netto"))}`,
     ];
     if (ev.notiz) lines.push(ev.notiz);
@@ -172,11 +174,11 @@
     block.style.setProperty("--netto", `${lessonPx}px`);
     block.title = eventTitle(ev);
     block.append(
-      el("b", "", t?.name || "Event"),
+      el("b", "", E.eventName(ev)),
       el("span", "", `${E.clock(ev.start_min)}–${E.clock(ev.end_min)}`),
       el("span", "ev-hours", lesson < ev.end_min
         ? `Unterricht bis ${E.clock(lesson)} · Puffer ${E.formatHM(ev.end_min - lesson)}`
-        : "ohne Puffer")
+        : `${E.formatHM(E.minutesOf(ev, "brutto"))} brutto · ${E.formatHM(E.minutesOf(ev, "netto"))} netto`)
     );
     block.addEventListener("pointerdown", (e) => e.stopPropagation());
     block.addEventListener("click", () => E.openEvent(ev));
@@ -322,7 +324,7 @@
           const t = E.typeOf(ev);
           const row = el("div", "er");
           row.style.setProperty("--c", t?.color || "#6a8fd8");
-          row.append(el("span", "tm", E.clock(ev.start_min)), document.createTextNode(` ${t?.name || "Event"}`));
+          row.append(el("span", "tm", E.clock(ev.start_min)), document.createTextNode(` ${E.eventName(ev)}`));
           row.title = eventTitle(ev);
           row.addEventListener("click", (e) => {
             e.stopPropagation();

@@ -158,7 +158,13 @@ api.delete("/pros/:id", auth.requireAdmin, async (req, res) => {
 
 // --- Event-Typen (Vorlagen, nur Admins bearbeiten) ---
 
-const TYPE_FIELDS = "id, name, brutto_min, netto_min, color";
+const TYPE_FIELDS = `id, ${eventsData.TYPE_COLUMNS.join(", ")}`;
+
+async function loadType(db, typeId) {
+  const { rows } = await db.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [typeId]);
+  if (!rows[0]) throw new eventsData.ValidationError("Event-Typ existiert nicht.");
+  return rows[0];
+}
 
 api.get("/event-types", auth.requireLogin, async (req, res) => {
   const { rows } = await pool.query(`SELECT ${TYPE_FIELDS} FROM event_types ORDER BY sort_order, id`);
@@ -179,11 +185,12 @@ async function saveType(res, run) {
 api.post("/event-types", auth.requireAdmin, (req, res) =>
   saveType(res, () => {
     const t = eventsData.normalizeType(req.body);
+    const cols = eventsData.TYPE_COLUMNS;
     return pool.query(
-      `INSERT INTO event_types (name, brutto_min, netto_min, color, sort_order)
-       VALUES ($1, $2, $3, $4, (SELECT coalesce(max(sort_order), 0) + 1 FROM event_types))
+      `INSERT INTO event_types (${cols.join(", ")}, sort_order)
+       VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")}, (SELECT coalesce(max(sort_order), 0) + 1 FROM event_types))
        RETURNING ${TYPE_FIELDS}`,
-      [t.name, t.brutto_min, t.netto_min, t.color]
+      eventsData.typeValues(t)
     );
   })
 );
@@ -191,10 +198,11 @@ api.post("/event-types", auth.requireAdmin, (req, res) =>
 api.put("/event-types/:id", auth.requireAdmin, (req, res) =>
   saveType(res, () => {
     const t = eventsData.normalizeType(req.body);
+    const cols = eventsData.TYPE_COLUMNS;
     return pool.query(
-      `UPDATE event_types SET name = $1, brutto_min = $2, netto_min = $3, color = $4
-        WHERE id = $5 RETURNING ${TYPE_FIELDS}`,
-      [t.name, t.brutto_min, t.netto_min, t.color, Number.parseInt(req.params.id, 10) || 0]
+      `UPDATE event_types SET ${cols.map((c, i) => `${c} = $${i + 1}`).join(", ")}
+        WHERE id = $${cols.length + 1} RETURNING ${TYPE_FIELDS}`,
+      [...eventsData.typeValues(t), Number.parseInt(req.params.id, 10) || 0]
     );
   })
 );
@@ -211,9 +219,10 @@ api.delete("/event-types/:id", auth.requireAdmin, async (req, res) => {
   }
 });
 
-// --- Events (geplante Einsätze) ---
+// --- Events (geplante Einsätze, einzeln oder als Serie) ---
 
-const EVENT_FIELDS = "id, type_id, pro_id, to_char(date, 'YYYY-MM-DD') AS date, start_min, end_min, notiz";
+const EVENT_FIELDS =
+  "id, type_id, pro_id, to_char(date, 'YYYY-MM-DD') AS date, start_min, end_min, notiz, series_id, series_index";
 
 api.get("/events", auth.requireLogin, async (req, res) => {
   const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || "") ? req.query.from : "0001-01-01";
@@ -225,49 +234,89 @@ api.get("/events", auth.requireLogin, async (req, res) => {
   res.json({ events: rows });
 });
 
-// Prüft Überschneidungen beim selben Pro und speichert.
-async function saveEvent(req, res, id) {
-  let ev;
+// Führt fn in einer Transaktion aus; Prüf- und Datenfehler werden als Antwort gemeldet.
+async function inTransaction(res, fn) {
+  const db = await pool.connect();
   try {
-    ev = eventsData.normalizeEvent(req.body);
+    await db.query("BEGIN");
+    const result = await fn(db);
+    await db.query("COMMIT");
+    return result;
   } catch (err) {
-    if (err instanceof eventsData.ValidationError) return res.status(400).json({ error: err.message });
+    await db.query("ROLLBACK");
+    if (err instanceof eventsData.ValidationError) return res.status(err.status || 400).json({ error: err.message });
+    if (err.code === "23503") return res.status(400).json({ error: "Pro oder Event-Typ existiert nicht." });
     throw err;
+  } finally {
+    db.release();
   }
-  const { rows: clash } = await pool.query(
+}
+
+function formatDate(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+// Überschneidung mit einem anderen Event desselben Pros?
+async function assertFree(db, ev, ignoreId, label) {
+  const { rows } = await db.query(
     `SELECT 1 FROM events
       WHERE pro_id = $1 AND date = $2 AND start_min < $4 AND end_min > $3 AND id <> $5 LIMIT 1`,
-    [ev.pro_id, ev.date, ev.start_min, ev.end_min, id || 0]
+    [ev.pro_id, ev.date, ev.start_min, ev.end_min, ignoreId || 0]
   );
-  if (clash.length) return res.status(409).json({ error: "Der Pro hat in dieser Zeit bereits ein Event." });
-
-  const params = [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz];
-  try {
-    const { rows } = id
-      ? await pool.query(
-          `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
-            WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
-          [...params, id]
-        )
-      : await pool.query(
-          `INSERT INTO events (type_id, pro_id, date, start_min, end_min, notiz, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${EVENT_FIELDS}`,
-          [...params, req.session.id || null]
-        );
-    if (!rows[0]) return res.status(404).json({ error: "Event nicht gefunden." });
-    res.status(id ? 200 : 201).json({ event: rows[0] });
-  } catch (err) {
-    if (err.code === "23503") return res.status(400).json({ error: "Pro oder Event-Typ existiert nicht." });
+  if (rows.length) {
+    const err = new eventsData.ValidationError(`${label}Der Pro hat am ${formatDate(ev.date)} in dieser Zeit bereits ein Event.`);
+    err.status = 409;
     throw err;
   }
 }
 
-api.post("/events", auth.requireLogin, (req, res) => saveEvent(req, res, null));
-api.put("/events/:id", auth.requireLogin, (req, res) => saveEvent(req, res, Number.parseInt(req.params.id, 10) || -1));
+api.post("/events", auth.requireLogin, (req, res) =>
+  inTransaction(res, async (db) => {
+    const type = await loadType(db, eventsData.id(req.body.type_id, "Event-Typ"));
+    const planned = eventsData.planNew(type, req.body);
+    const created = [];
+    for (const ev of planned) {
+      await assertFree(db, ev, 0, planned.length > 1 ? `Termin ${ev.series_index}: ` : "");
+      const { rows } = await db.query(
+        `INSERT INTO events (type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${EVENT_FIELDS}`,
+        [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz, ev.series_id, ev.series_index, req.session.id || null]
+      );
+      created.push(rows[0]);
+    }
+    res.status(201).json({ events: created });
+  })
+);
 
+api.put("/events/:id", auth.requireLogin, (req, res) =>
+  inTransaction(res, async (db) => {
+    const eventId = Number.parseInt(req.params.id, 10) || 0;
+    const { rows } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE id = $1 FOR UPDATE`, [eventId]);
+    if (!rows[0]) return res.status(404).json({ error: "Event nicht gefunden." });
+    const typeId = rows[0].series_id ? rows[0].type_id : eventsData.id(req.body.type_id, "Event-Typ");
+    const ev = eventsData.planUpdate(rows[0], await loadType(db, typeId), req.body);
+    await assertFree(db, ev, eventId, "");
+    const { rows: updated } = await db.query(
+      `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
+        WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
+      [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz, eventId]
+    );
+    res.json({ event: updated[0] });
+  })
+);
+
+// ?serie=1 löscht alle Termine der Serie
 api.delete("/events/:id", auth.requireLogin, async (req, res) => {
-  await pool.query("DELETE FROM events WHERE id = $1", [Number.parseInt(req.params.id, 10) || 0]);
-  res.json({ ok: true });
+  const eventId = Number.parseInt(req.params.id, 10) || 0;
+  const { rows } = req.query.serie
+    ? await pool.query(
+        `DELETE FROM events WHERE id = $1 OR series_id = (SELECT series_id FROM events WHERE id = $1)
+         RETURNING ${EVENT_FIELDS}`,
+        [eventId]
+      )
+    : await pool.query(`DELETE FROM events WHERE id = $1 RETURNING ${EVENT_FIELDS}`, [eventId]);
+  res.json({ deleted: rows });
 });
 
 app.use("/api", api);

@@ -1,8 +1,10 @@
-// Events: Brutto/Netto-Berechnung, Event-Dialog und Events-Seite.
+// Events: Brutto/Netto-Berechnung, Event-Dialog (einzeln oder Serie) und Events-Seite.
 (function () {
   const D = window.Dates;
   const { el } = D;
   const $ = (sel) => document.querySelector(sel);
+
+  const WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
 
   let ctx = null; // { api, toast, reload, isAdmin }
   let data = { pros: [], types: [], events: [] };
@@ -15,18 +17,38 @@
     return data.types.find((t) => t.id === ev.type_id);
   }
 
-  // Brutto bzw. Netto in Minuten (Typ-Angaben gelten pro 30 min geplanter Zeit)
+  function isSeriesType(t) {
+    return !!t && t.series_offsets.length > 1;
+  }
+
+  // Brutto bzw. Netto in Minuten:
+  // faktor   → Typ-Angaben gelten pro 30 min geplanter Zeit
+  // pauschal → feste Minuten pro Termin
   function minutesOf(ev, mode) {
     const t = typeOf(ev);
     if (!t) return 0;
+    if (t.calc === "pauschal") return mode === "netto" ? t.netto_fix_min : t.brutto_fix_min;
     const per30 = mode === "netto" ? t.netto_min : t.brutto_min;
     return ((ev.end_min - ev.start_min) * per30) / 30;
   }
 
   // Ende des Unterrichts: Der Unterricht beginnt pünktlich, der ganze Puffer
-  // (Brutto − Netto) liegt am Ende des Events.
+  // liegt am Ende des Events.
   function lessonEnd(ev) {
-    return Math.round(ev.start_min + minutesOf(ev, "netto"));
+    return Math.min(ev.end_min, Math.round(ev.start_min + minutesOf(ev, "netto")));
+  }
+
+  // Alle Termine derselben Serie, sortiert
+  function seriesOf(ev) {
+    if (!ev.series_id) return [ev];
+    return data.events.filter((x) => x.series_id === ev.series_id).sort((a, b) => a.series_index - b.series_index);
+  }
+
+  // "Platzreife Teil 1 A · 2/4"
+  function eventName(ev) {
+    const name = typeOf(ev)?.name || "Event";
+    const t = typeOf(ev);
+    return ev.series_id && t ? `${name} · ${ev.series_index}/${t.series_offsets.length}` : name;
   }
 
   // Geplante Stunden je Pro (Minuten brutto/netto) aus allen geladenen Events
@@ -77,30 +99,113 @@
     return data.pros.find((p) => p.id === id)?.name || "–";
   }
 
+  // "Sa, So, Sa, So" aus Wochentag des ersten Termins und Abständen
+  function patternText(t) {
+    if (t.first_weekday === null) return `${t.series_offsets.length} Termine`;
+    return t.series_offsets.map((o) => D.WEEKDAYS[(t.first_weekday + o) % 7]).join(", ");
+  }
+
   // --- Event-Dialog ---
 
   function fillSelect(select, items, label) {
     select.replaceChildren(...items.map((i) => new Option(label(i), String(i.id))));
   }
 
+  function selectedType() {
+    const f = $("#event-form").elements;
+    return data.types.find((x) => String(x.id) === f.type_id.value);
+  }
+
+  function shortDate(date) {
+    return `${D.WEEKDAYS[D.weekday(date)]} ${D.formatShort(date)}`;
+  }
+
+  // Termine der Serie: Datum je Termin und (unter «Erweitert») ein eigener Pro je Termin
+  function renderSeriesRows() {
+    const f = $("#event-form").elements;
+    const t = selectedType();
+    const box = $("#event-series");
+    box.hidden = !isSeriesType(t) || !!editingEvent;
+    if (box.hidden) return;
+
+    const first = f.date.value ? D.parseDate(f.date.value) : null;
+    const previous = [...document.querySelectorAll("#event-series-rows select")].map((s) => s.value);
+    const rows = $("#event-series-rows");
+    rows.replaceChildren();
+    const dates = [];
+    t.series_offsets.forEach((offset, i) => {
+      const date = first ? D.addDays(first, offset) : null;
+      dates.push(date ? shortDate(date) : "–");
+      const row = el("div", "series-row");
+      row.append(el("span", "n", `Termin ${i + 1}`), el("span", "d", date ? shortDate(date) : "–"));
+      const select = el("select", "fsel");
+      select.append(new Option(`wie oben (${proName(Number(f.pro_id.value))})`, ""));
+      for (const p of data.pros) select.append(new Option(p.name, String(p.id)));
+      select.value = previous[i] || "";
+      row.append(select);
+      rows.append(row);
+    });
+    $("#event-series-summary").textContent = `${t.series_offsets.length} Termine: ${dates.join(" · ")}`;
+  }
+
   function updatePreview() {
     const f = $("#event-form").elements;
+    const t = selectedType();
+    const box = $("#event-preview");
     const start = f.start.value ? parseClock(f.start.value) : 0;
     const end = f.end.value ? parseClock(f.end.value) : 0;
-    const t = data.types.find((x) => String(x.id) === f.type_id.value);
-    const box = $("#event-preview");
     if (!t || end <= start) {
       box.textContent = "";
       return;
     }
     const ev = { type_id: t.id, start_min: start, end_min: end };
     const lesson = lessonEnd(ev);
+    const per = isSeriesType(t) ? " pro Termin" : "";
     box.replaceChildren(
-      el("span", "", `Brutto ${formatHM(minutesOf(ev, "brutto"))}`),
-      el("span", "", `Netto ${formatHM(minutesOf(ev, "netto"))}`),
+      el("span", "", `Brutto ${formatHM(minutesOf(ev, "brutto"))}${per}`),
+      el("span", "", `Netto ${formatHM(minutesOf(ev, "netto"))}${per}`),
       el("span", "", `Unterricht ${clock(start)}–${clock(lesson)}`)
     );
     if (lesson < end) box.append(el("span", "", `Puffer ${clock(lesson)}–${clock(end)}`));
+    if (isSeriesType(t) && !editingEvent) {
+      box.append(el("span", "", `Total ${formatHM(minutesOf(ev, "brutto") * t.series_offsets.length)} brutto`));
+    }
+  }
+
+  // Hinweis, wenn der Typ nur an einem bestimmten Wochentag beginnen darf
+  function updateWeekdayHint() {
+    const f = $("#event-form").elements;
+    const t = selectedType();
+    const hint = $("#event-weekday-hint");
+    const wrong = t && t.first_weekday !== null && f.date.value && D.weekday(D.parseDate(f.date.value)) !== t.first_weekday;
+    hint.hidden = !wrong;
+    if (wrong) hint.textContent = `«${t.name}» beginnt immer an einem ${WEEKDAYS[t.first_weekday]}.`;
+  }
+
+  // Feste Zeit und Serie des gewählten Typs übernehmen
+  function applyType({ adjustDate }) {
+    const f = $("#event-form").elements;
+    const t = selectedType();
+    if (!t) return;
+    const fixed = t.fixed_start_min !== null;
+    if (fixed) {
+      f.start.value = clock(t.fixed_start_min);
+      f.end.value = clock(t.fixed_end_min);
+    }
+    const locked = fixed || !!editingEvent?.series_id;
+    f.start.disabled = locked;
+    f.end.disabled = locked;
+    $("#event-fixed-hint").hidden = !fixed || !!editingEvent?.series_id;
+
+    // Beim Wechsel auf einen Typ mit festem Wochentag zum nächsten passenden Tag springen
+    if (adjustDate && t.first_weekday !== null && f.date.value) {
+      const date = D.parseDate(f.date.value);
+      const diff = (t.first_weekday - D.weekday(date) + 7) % 7;
+      if (diff) f.date.value = D.isoKey(D.addDays(date, diff));
+    }
+    renderSeriesRows();
+    updateWeekdayHint();
+    updatePreview();
   }
 
   // event: bestehendes Event bearbeiten; prefill: { pro_id, date, start_min, end_min } für ein neues
@@ -117,33 +222,55 @@
     const form = $("#event-form");
     form.reset();
     form.querySelector(".form-error").textContent = "";
-    $("#event-title").textContent = event ? "Event bearbeiten" : "Neues Event";
+    $("#event-series-rows").replaceChildren();
+    $("#event-series-more").open = false;
+
+    const series = !!event?.series_id;
+    const t = event ? typeOf(event) : null;
+    $("#event-title").textContent = series
+      ? `${t?.name || "Serie"} · Termin ${event.series_index} von ${t?.series_offsets.length ?? "?"}`
+      : event ? "Event bearbeiten" : "Neues Event";
     $("#event-delete").hidden = !event;
+    $("#event-delete").textContent = series ? "Serie löschen" : "Löschen";
+    $("#event-series-note").hidden = !series;
 
     const f = form.elements;
-    fillSelect(f.type_id, data.types, (t) => t.name);
+    // Serien-Typen lassen sich nur neu anlegen, nicht aus einem einzelnen Event
+    const types = event && !series ? data.types.filter((x) => !isSeriesType(x)) : data.types;
+    fillSelect(f.type_id, types, (x) => (isSeriesType(x) ? `${x.name} (${x.series_offsets.length} Termine)` : x.name));
     fillSelect(f.pro_id, data.pros, (p) => p.name);
     const v = event || prefill;
-    f.type_id.value = String(v.type_id || data.types[0].id);
+    f.type_id.value = String(v.type_id || types[0].id);
     f.pro_id.value = String(v.pro_id || data.pros[0].id);
     f.date.value = v.date || D.isoKey(new Date(2027, 0, 4));
     f.start.value = clock(v.start_min ?? 9 * 60);
     f.end.value = clock(v.end_min ?? 10 * 60);
     f.notiz.value = v.notiz || "";
-    updatePreview();
+    f.type_id.disabled = series;
+    f.date.disabled = series;
+    applyType({ adjustDate: !event });
     $("#dlg-event").showModal();
   }
 
-  // Löscht ohne Rückfrage; die Meldung bietet «Rückgängig» an (legt das Event neu an).
+  // Löscht ohne Rückfrage; die Meldung bietet «Rückgängig» an.
+  // Termine einer Serie werden immer gemeinsam gelöscht und wiederhergestellt.
   async function deleteEvent(ev) {
-    await ctx.api(`/events/${ev.id}`, { method: "DELETE" });
-    ctx.toast(`${typeOf(ev)?.name || "Event"} ${clock(ev.start_min)}–${clock(ev.end_min)} gelöscht`, {
+    const series = seriesOf(ev);
+    await ctx.api(`/events/${ev.id}${ev.series_id ? "?serie=1" : ""}`, { method: "DELETE" });
+    const t = typeOf(ev);
+    const label = ev.series_id
+      ? `${t?.name || "Serie"} (${series.length} Termine) gelöscht`
+      : `${t?.name || "Event"} ${clock(ev.start_min)}–${clock(ev.end_min)} gelöscht`;
+    ctx.toast(label, {
       label: "Rückgängig",
       run: async () => {
         try {
-          const { type_id, pro_id, date, start_min, end_min, notiz } = ev;
-          await ctx.api("/events", { method: "POST", body: { type_id, pro_id, date, start_min, end_min, notiz } });
-          ctx.toast("Event wiederhergestellt");
+          const first = series[0];
+          const body = ev.series_id
+            ? { type_id: first.type_id, date: first.date, pro_id: first.pro_id, pros: series.map((x) => x.pro_id), notiz: first.notiz }
+            : { type_id: ev.type_id, pro_id: ev.pro_id, date: ev.date, start_min: ev.start_min, end_min: ev.end_min, notiz: ev.notiz };
+          await ctx.api("/events", { method: "POST", body });
+          ctx.toast(ev.series_id ? "Serie wiederhergestellt" : "Event wiederhergestellt");
           ctx.reload();
         } catch (err) {
           ctx.toast(err.message);
@@ -155,11 +282,15 @@
 
   // Rechtsklick-Menü für ein bestehendes Event
   function eventMenu(e, ev) {
-    const t = typeOf(ev);
+    const series = ev.series_id ? seriesOf(ev) : null;
     ContextMenu.open(e, [
-      { label: "Bearbeiten", hint: `${t?.name || "Event"} · ${clock(ev.start_min)}–${clock(ev.end_min)}`, action: () => openEvent(ev) },
       {
-        label: "Löschen",
+        label: series ? `Termin ${ev.series_index} bearbeiten` : "Bearbeiten",
+        hint: `${eventName(ev)} · ${clock(ev.start_min)}–${clock(ev.end_min)}`,
+        action: () => openEvent(ev),
+      },
+      {
+        label: series ? `Serie löschen (${series.length} Termine)` : "Löschen",
         danger: true,
         action: () => deleteEvent(ev).catch((err) => ctx.toast(err.message)),
       },
@@ -167,6 +298,29 @@
   }
 
   // --- Event-Typ-Dialog (Admin) ---
+
+  function updateTypeForm() {
+    const f = $("#type-form").elements;
+    const pauschal = f.calc.value === "pauschal";
+    $("#type-faktor").hidden = pauschal;
+    $("#type-pauschal").hidden = !pauschal;
+    const offsets = parseOffsets(f.series_offsets.value);
+    const weekday = f.first_weekday.value === "" ? null : Number(f.first_weekday.value);
+    $("#type-pattern").textContent = offsets
+      ? offsets.length > 1
+        ? `→ ${offsets.length} Termine${weekday === null ? "" : `: ${offsets.map((o) => D.WEEKDAYS[(weekday + o) % 7]).join(", ")}`}`
+        : "→ einzelner Termin"
+      : "Bitte Zahlen mit Komma trennen, z. B. 0, 1, 7, 8";
+  }
+
+  function parseOffsets(text) {
+    const parts = text.split(/[,;\s]+/).filter(Boolean);
+    if (!parts.length) return [0];
+    const nums = parts.map(Number);
+    return nums.every((n) => Number.isInteger(n) && n >= 0) ? nums : null;
+  }
+
+  const hours = (min) => (min === null || min === undefined ? "" : String(min / 60));
 
   function openType(type) {
     editingType = type || null;
@@ -177,17 +331,48 @@
     $("#type-delete").hidden = !type;
     const f = form.elements;
     f.name.value = type?.name || "";
+    f.color.value = type?.color || "#6a8fd8";
+    f.calc.value = type?.calc || "faktor";
     f.brutto_min.value = type?.brutto_min ?? 30;
     f.netto_min.value = type?.netto_min ?? 25;
-    f.color.value = type?.color || "#6a8fd8";
+    f.brutto_fix.value = hours(type?.brutto_fix_min);
+    f.netto_fix.value = hours(type?.netto_fix_min);
+    f.fixed_start.value = type?.fixed_start_min != null ? clock(type.fixed_start_min) : "";
+    f.fixed_end.value = type?.fixed_end_min != null ? clock(type.fixed_end_min) : "";
+    f.first_weekday.value = type?.first_weekday != null ? String(type.first_weekday) : "";
+    f.series_offsets.value = (type?.series_offsets || [0]).join(", ");
+    updateTypeForm();
     $("#dlg-type").showModal();
+  }
+
+  function readTypeForm() {
+    const f = $("#type-form").elements;
+    const offsets = parseOffsets(f.series_offsets.value);
+    if (!offsets) throw new Error("Abstände der Termine: bitte Zahlen mit Komma trennen, z. B. 0, 1, 7, 8.");
+    const toMin = (v) => (v === "" ? null : Math.round(Number(v) * 60));
+    return {
+      name: f.name.value,
+      color: f.color.value,
+      calc: f.calc.value,
+      brutto_min: Number(f.brutto_min.value),
+      netto_min: Number(f.netto_min.value),
+      brutto_fix_min: toMin(f.brutto_fix.value),
+      netto_fix_min: toMin(f.netto_fix.value),
+      fixed_start_min: f.fixed_start.value ? parseClock(f.fixed_start.value) : null,
+      fixed_end_min: f.fixed_end.value ? parseClock(f.fixed_end.value) : null,
+      first_weekday: f.first_weekday.value === "" ? null : Number(f.first_weekday.value),
+      series_offsets: offsets,
+    };
   }
 
   // --- Events-Seite ---
 
-  function perHour(t) {
+  function hoursText(t) {
+    if (t.calc === "pauschal") {
+      return `pro Termin ${formatHM(t.brutto_fix_min)} brutto · ${formatHM(t.netto_fix_min)} netto`;
+    }
     const ev = { type_id: t.id, start_min: 0, end_min: 60 };
-    return `1 h = ${formatHM(minutesOf(ev, "brutto"))} brutto · ${formatHM(minutesOf(ev, "netto"))} netto`;
+    return `${t.brutto_min}/${t.netto_min} min pro 30 min · 1 h = ${formatHM(minutesOf(ev, "brutto"))} brutto · ${formatHM(minutesOf(ev, "netto"))} netto`;
   }
 
   function renderTypes() {
@@ -199,7 +384,9 @@
       const dot = el("span", "gdot");
       dot.style.background = t.color;
       name.append(dot, document.createTextNode(t.name));
-      tr.append(name, el("td", "num", `${t.brutto_min} min`), el("td", "num", `${t.netto_min} min`), el("td", "muted", perHour(t)));
+      const time = t.fixed_start_min !== null ? `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}` : "frei wählbar";
+      const terms = isSeriesType(t) ? `${t.series_offsets.length} (${patternText(t)})` : t.first_weekday !== null ? `1 (${D.WEEKDAYS[t.first_weekday]})` : "1";
+      tr.append(name, el("td", "muted", hoursText(t)), el("td", "tab", time), el("td", "", terms));
       const actions = el("td");
       if (ctx.isAdmin()) {
         const btn = el("button", "btn sm", "Bearbeiten");
@@ -229,7 +416,7 @@
       const typeCell = el("td");
       const dot = el("span", "gdot");
       dot.style.background = t?.color || "var(--line-2)";
-      typeCell.append(dot, document.createTextNode(t?.name || "–"));
+      typeCell.append(dot, document.createTextNode(eventName(ev)));
       tr.append(
         el("td", "tab", D.formatDate(ev.date)),
         el("td", "tab", `${clock(ev.start_min)}–${clock(ev.end_min)}`),
@@ -267,7 +454,14 @@
     ctx = context;
 
     const ef = $("#event-form");
-    ["type_id", "start", "end"].forEach((n) => ef.elements[n].addEventListener("input", updatePreview));
+    ef.elements.type_id.addEventListener("change", () => applyType({ adjustDate: true }));
+    ef.elements.date.addEventListener("input", () => {
+      renderSeriesRows();
+      updateWeekdayHint();
+    });
+    ef.elements.pro_id.addEventListener("change", renderSeriesRows);
+    ["start", "end"].forEach((n) => ef.elements[n].addEventListener("input", updatePreview));
+
     ef.addEventListener("submit", async (e) => {
       e.preventDefault();
       const f = ef.elements;
@@ -279,13 +473,16 @@
         end_min: f.end.value ? parseClock(f.end.value) : null,
         notiz: f.notiz.value,
       };
+      const perTermin = [...document.querySelectorAll("#event-series-rows select")];
+      if (!editingEvent && perTermin.length) body.pros = perTermin.map((s) => (s.value ? Number(s.value) : null));
       try {
-        await ctx.api(editingEvent ? `/events/${editingEvent.id}` : "/events", {
+        const result = await ctx.api(editingEvent ? `/events/${editingEvent.id}` : "/events", {
           method: editingEvent ? "PUT" : "POST",
           body,
         });
         $("#dlg-event").close();
-        ctx.toast(editingEvent ? "Event gespeichert" : "Event erstellt");
+        const count = result.events?.length || 1;
+        ctx.toast(editingEvent ? "Event gespeichert" : count > 1 ? `Serie mit ${count} Terminen erstellt` : "Event erstellt");
         ctx.reload();
       } catch (err) {
         ef.querySelector(".form-error").textContent = err.message;
@@ -302,13 +499,13 @@
     });
 
     const tf = $("#type-form");
+    ["calc", "series_offsets", "first_weekday"].forEach((n) => tf.elements[n].addEventListener("input", updateTypeForm));
     tf.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const f = tf.elements;
       try {
         const { type } = await ctx.api(editingType ? `/event-types/${editingType.id}` : "/event-types", {
           method: editingType ? "PUT" : "POST",
-          body: { name: f.name.value, brutto_min: Number(f.brutto_min.value), netto_min: Number(f.netto_min.value), color: f.color.value },
+          body: readTypeForm(),
         });
         $("#dlg-type").close();
         ctx.toast(editingType ? `«${type.name}» gespeichert` : `Event-Typ «${type.name}» angelegt`);
@@ -333,5 +530,8 @@
     $("#btn-new-type").addEventListener("click", () => openType(null));
   }
 
-  window.Events = { init, setData, render, openEvent, eventMenu, minutesOf, lessonEnd, plannedByPro, percentOfSoll, formatPercent, formatHM, formatShortHours, clock, typeOf };
+  window.Events = {
+    init, setData, render, openEvent, eventMenu, eventName, minutesOf, lessonEnd,
+    plannedByPro, percentOfSoll, formatPercent, formatHM, formatShortHours, clock, typeOf,
+  };
 })();
