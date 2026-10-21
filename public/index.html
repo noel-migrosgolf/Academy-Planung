@@ -27,6 +27,12 @@
         <div><img class="word" src="img/logo-wordmark.png" alt="AI Academy Golf"><span>Planungstool</span></div>
       </div>
       <div class="spacer"></div>
+      <div id="plan-bar" class="plan-bar" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
+        <select id="plan-select" class="fsel" title="Plan wählen" aria-label="Plan"></select>
+        <span id="plan-ro" class="badge" hidden title="Dieser Plan ist für dich nur zum Ansehen freigegeben">nur ansehen</span>
+        <button class="btn sm" type="button" id="btn-plans">Pläne</button>
+      </div>
       <span id="session-info" class="user-chip" hidden>
         <i id="session-avatar"></i><span id="session-name"></span>
       </span>
@@ -76,7 +82,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.4 3.4-5.5 6.5-5.5s5.7 2.1 6.5 5.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16.5 14.6c2.6-.3 4.6 1.4 5.2 4.4"/></svg>
         Benutzer
       </button>
-      <button data-page="history" data-admin hidden>
+      <button data-page="history">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
         Verlauf
       </button>
@@ -278,7 +284,7 @@
       <!-- Verlauf (Admin) -->
       <section id="page-history" class="page" hidden>
         <h1>Verlauf</h1>
-        <p class="lead">Nach jeder Änderung an den Events (welcher Pro wann welchen Kurs hat) wird der Stand gespeichert. «Wiederherstellen» setzt die Events auf diesen Stand zurück; das lässt sich ebenfalls rückgängig machen. Pros, Event-Typen und Benutzerkonten werden nicht gespeichert und bleiben beim Wiederherstellen unverändert.</p>
+        <p class="lead">Verlauf des aktuellen Plans: Nach jeder Änderung an den Events (welcher Pro wann welchen Kurs hat) wird der Stand gespeichert. «Wiederherstellen» setzt die Events auf diesen Stand zurück; das lässt sich ebenfalls rückgängig machen. Pros, Event-Typen und Benutzerkonten werden nicht gespeichert und bleiben beim Wiederherstellen unverändert.</p>
         <div class="card stack">
           <div class="hd"><h3>Versionen</h3><span class="sub" id="version-count"></span></div>
           <table class="t">
@@ -703,6 +709,23 @@
     </form>
   </dialog>
 
+  <!-- Pläne: anlegen, kopieren, umbenennen, löschen, teilen -->
+  <dialog id="dlg-plans" class="dialog dialog-wide">
+    <div class="card">
+      <div class="hd"><h3>Pläne</h3><span class="sub">Termine, Regeln, Verlauf und KI-Chats gehören zum Plan; Pros und Event-Typen sind gemeinsam.</span></div>
+      <div class="bd">
+        <form id="plan-new" class="plan-new" novalidate>
+          <input name="name" type="text" maxlength="80" placeholder="Name des neuen Plans" autocomplete="off">
+          <label class="check sm"><input type="checkbox" name="copy"> Termine und Regeln vom aktuellen Plan übernehmen</label>
+          <button class="btn primary sm" type="submit">Neuer Plan</button>
+        </form>
+        <p class="form-error" id="plan-error" role="alert"></p>
+        <div id="plan-list" class="plan-list"></div>
+      </div>
+      <div class="actions plan-actions"><button class="btn" type="button" data-close>Schliessen</button></div>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast" role="status"></div>
 
   <script src="js/ferien.js"></script>
@@ -712,6 +735,7 @@
   <script src="js/events.js"></script>
   <script src="js/planner.js"></script>
   <script src="js/pros.js"></script>
+  <script src="js/plans.js"></script>
   <script src="js/history.js"></script>
   <script src="js/ai.js"></script>
   <script src="js/autofill.js"></script>

@@ -40,12 +40,12 @@ function minutesOf(ev, type, mode) {
   return ((ev.end_min - ev.start_min) * (mode === "netto" ? type.netto_min : type.brutto_min)) / 30;
 }
 
-// Überschneidung mit einem anderen Event desselben Pros?
-async function assertFree(db, ev, ignoreId, label) {
+// Überschneidung mit einem anderen Event desselben Pros im selben Plan?
+async function assertFree(db, planId, ev, ignoreId, label) {
   const { rows } = await db.query(
     `SELECT 1 FROM events
-      WHERE pro_id = $1 AND date = $2 AND start_min < $4 AND end_min > $3 AND id <> $5 LIMIT 1`,
-    [ev.pro_id, ev.date, ev.start_min, ev.end_min, ignoreId || 0]
+      WHERE plan_id = $6 AND pro_id = $1 AND date = $2 AND start_min < $4 AND end_min > $3 AND id <> $5 LIMIT 1`,
+    [ev.pro_id, ev.date, ev.start_min, ev.end_min, ignoreId || 0, planId]
   );
   if (rows.length) {
     const err = new eventsData.ValidationError(`${label}Der Pro hat am ${formatDate(ev.date)} in dieser Zeit bereits ein Event.`);
@@ -73,18 +73,18 @@ async function assertArea(db, type, proIds, label = "") {
   }
 }
 
-// Höchstens max_stunden Sollstunden (brutto) je Typ, über alle Pros.
-async function usedMinutes(db, type) {
-  const { rows } = await db.query("SELECT start_min, end_min FROM events WHERE type_id = $1", [type.id]);
+// Höchstens max_stunden Sollstunden (brutto) je Typ, über alle Pros eines Plans.
+async function usedMinutes(db, planId, type) {
+  const { rows } = await db.query("SELECT start_min, end_min FROM events WHERE plan_id = $1 AND type_id = $2", [planId, type.id]);
   return rows.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
 }
 
 const hoursText = (min) => `${Math.round((min / 60) * 10) / 10} h`;
 
 // addMinutes: zusätzliche Brutto-Minuten durch die Änderung (bei Änderungen die Differenz)
-async function assertCapacity(db, type, addMinutes, label = "") {
+async function assertCapacity(db, planId, type, addMinutes, label = "") {
   if (!type.max_stunden || addMinutes <= 0) return;
-  const used = await usedMinutes(db, type);
+  const used = await usedMinutes(db, planId, type);
   if (used + addMinutes > type.max_stunden * 60 + 0.01) {
     throw new eventsData.ValidationError(
       `${label}«${type.name}»: höchstens ${type.max_stunden} Sollstunden, bereits ${hoursText(used)} geplant, dazu kämen ${hoursText(addMinutes)}.`
@@ -126,14 +126,14 @@ function requirePro(lk, value, label) {
 
 // --- Lesefreundliche Übersicht ---
 
-async function overview({ from, to, pro } = {}, db = pool) {
+async function overview(planId, { from, to, pro } = {}, db = pool) {
   const lk = await lookups(db);
   const typeById = new Map(lk.types.map((t) => [t.id, t]));
   const proById = new Map(lk.pros.map((p) => [p.id, p]));
   const proFilter = pro ? findPro(lk, pro) : null;
   if (pro && !proFilter) throw new PlanningError(`Pro «${pro}» nicht gefunden.`);
 
-  const { rows: all } = await db.query(`SELECT ${EVENT_FIELDS} FROM events ORDER BY date, start_min, id`);
+  const { rows: all } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE plan_id = $1 ORDER BY date, start_min, id`, [planId]);
   const planned = new Map();
   for (const ev of all) {
     const t = typeById.get(ev.type_id);
@@ -147,7 +147,7 @@ async function overview({ from, to, pro } = {}, db = pool) {
     (ev) => (!from || ev.date >= from) && (!to || ev.date <= to) && (!proFilter || ev.pro_id === proFilter.id)
   );
 
-  const regeln = (await ruleStatus(db)).filter((r) => r.aktiv);
+  const regeln = (await ruleStatus(planId, db)).filter((r) => r.aktiv);
   return {
     regeln: regeln.map((r) => ({
       id: `R${r.id}`,
@@ -266,7 +266,7 @@ async function eachItem(db, items, errors, fn) {
 
 // items: [{ typ|type_id, pro|pro_id, datum|date, von|start_min, bis|end_min, pros?, notiz? }] – Zeiten als «HH:MM» oder Minuten
 // pros: optional ein Pro pro Termin einer Serie (Name, Kürzel oder ID; leer = wie pro)
-async function bulkCreate(items, { dryRun = false, userId = null } = {}) {
+async function bulkCreate(planId, items, { dryRun = false, userId = null } = {}) {
   if (!Array.isArray(items) || !items.length) throw new PlanningError("Keine Events angegeben.");
   if (items.length > 200) throw new PlanningError("Höchstens 200 Einträge pro Aufruf.");
   return transaction(dryRun, "created", async (db) => {
@@ -289,14 +289,14 @@ async function bulkCreate(items, { dryRun = false, userId = null } = {}) {
         notiz: item.notiz,
       });
       await assertArea(db, type, planned.map((ev) => ev.pro_id), label);
-      await assertCapacity(db, type, sumBrutto(planned, type), label);
-      await assertRules(db, type, planned, [], label);
+      await assertCapacity(db, planId, type, sumBrutto(planned, type), label);
+      await assertRules(db, planId, type, planned, [], label);
       for (const ev of planned) {
-        await assertFree(db, ev, 0, `${label}${planned.length > 1 ? `Termin ${ev.series_index}: ` : ""}`);
+        await assertFree(db, planId, ev, 0, `${label}${planned.length > 1 ? `Termin ${ev.series_index}: ` : ""}`);
         const { rows } = await db.query(
-          `INSERT INTO events (type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${EVENT_FIELDS}, created_at`,
-          [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz, ev.series_id, ev.series_index, userId]
+          `INSERT INTO events (plan_id, type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by)
+           VALUES ($10, $1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${EVENT_FIELDS}, created_at`,
+          [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz, ev.series_id, ev.series_index, userId, planId]
         );
         created.push(rows[0]);
       }
@@ -306,16 +306,17 @@ async function bulkCreate(items, { dryRun = false, userId = null } = {}) {
 }
 
 // ids: Event-IDs; serie: ganze Serie(n) mitlöschen
-async function bulkDelete(ids, { serie = false, dryRun = false } = {}) {
+async function bulkDelete(planId, ids, { serie = false, dryRun = false } = {}) {
   if (!Array.isArray(ids) || !ids.length) throw new PlanningError("Keine Events angegeben.");
   return transaction(dryRun, "deleted", async (db) => {
     const clean = ids.map((v) => Number.parseInt(v, 10)).filter(Number.isInteger);
     const { rows } = await db.query(
       `DELETE FROM events
-        WHERE id = ANY($1::int[])
-           OR ($2 AND series_id IN (SELECT series_id FROM events WHERE id = ANY($1::int[]) AND series_id IS NOT NULL))
+        WHERE plan_id = $3
+          AND (id = ANY($1::int[])
+               OR ($2 AND series_id IN (SELECT series_id FROM events WHERE plan_id = $3 AND id = ANY($1::int[]) AND series_id IS NOT NULL)))
         RETURNING ${EVENT_FIELDS}, created_by, created_at`,
-      [clean, serie]
+      [clean, serie, planId]
     );
     const found = new Set(rows.map((r) => r.id));
     const errors = clean.filter((id) => !found.has(id)).map((id) => ({ eintrag: id, fehler: `Event ${id} nicht gefunden.` }));
@@ -324,7 +325,7 @@ async function bulkDelete(ids, { serie = false, dryRun = false } = {}) {
 }
 
 // changes: [{ event_id, pro?, typ?, datum?, von?, bis?, notiz? }] – fehlende Felder bleiben unverändert
-async function bulkUpdate(changes, { dryRun = false } = {}) {
+async function bulkUpdate(planId, changes, { dryRun = false } = {}) {
   if (!Array.isArray(changes) || !changes.length) throw new PlanningError("Keine Änderungen angegeben.");
   return transaction(dryRun, "updated", async (db) => {
     const lk = await lookups(db);
@@ -334,7 +335,7 @@ async function bulkUpdate(changes, { dryRun = false } = {}) {
     await eachItem(db, changes, errors, async (c) => {
       const id = Number.parseInt(c.event_id, 10) || 0;
       const label = `Event ${id}: `;
-      const { rows } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE id = $1 FOR UPDATE`, [id]);
+      const { rows } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE id = $1 AND plan_id = $2 FOR UPDATE`, [id, planId]);
       const current = rows[0];
       if (!current) throw new PlanningError(`${label}nicht gefunden.`);
       const type = current.series_id ? lk.types.find((t) => t.id === current.type_id) : findType(lk, c.typ ?? current.type_id);
@@ -350,9 +351,9 @@ async function bulkUpdate(changes, { dryRun = false } = {}) {
       });
       await assertArea(db, type, [ev.pro_id], label);
       const before = type.id === current.type_id ? minutesOf(current, type, "brutto") : 0;
-      await assertCapacity(db, type, minutesOf(ev, type, "brutto") - before, label);
-      await assertRules(db, type, [ev], type.id === current.type_id ? [current] : [], label);
-      await assertFree(db, ev, id, label);
+      await assertCapacity(db, planId, type, minutesOf(ev, type, "brutto") - before, label);
+      await assertRules(db, planId, type, [ev], type.id === current.type_id ? [current] : [], label);
+      await assertFree(db, planId, ev, id, label);
       const { rows: done } = await db.query(
         `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
           WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
@@ -378,11 +379,12 @@ const WEEKDAY_INDEX = Object.fromEntries(eventsData.WEEKDAYS.map((d, i) => [d.to
 
 // --- Regeln (server/rules.js) ---
 
-async function loadRules(db, { activeOnly = true } = {}) {
+async function loadRules(db, planId, { activeOnly = true } = {}) {
   const { rows } = await db.query(
-    `SELECT r.id, r.art, r.type_id, r.type_ids, to_char(r.von, 'YYYY-MM-DD') AS von, to_char(r.bis, 'YYYY-MM-DD') AS bis,
+    `SELECT r.id, r.plan_id, r.art, r.type_id, r.type_ids, to_char(r.von, 'YYYY-MM-DD') AS von, to_char(r.bis, 'YYYY-MM-DD') AS bis,
             r.operator, r.stunden, r.prozent, r.wochentage, r.aktiv, r.notiz
-       FROM rules r ${activeOnly ? "WHERE r.aktiv" : ""} ORDER BY r.art, r.von, r.id`
+       FROM rules r WHERE r.plan_id = $1 ${activeOnly ? "AND r.aktiv" : ""} ORDER BY r.art, r.von, r.id`,
+    [planId]
   );
   return rows;
 }
@@ -390,19 +392,19 @@ async function loadRules(db, { activeOnly = true } = {}) {
 // Brutto-Minuten eines Typs im Zeitraum der Regel (jeder Termin zählt mit seinem Datum)
 async function ruleMinutes(db, rule, type) {
   const { rows } = await db.query(
-    "SELECT start_min, end_min FROM events WHERE type_id = $1 AND date BETWEEN $2 AND $3",
-    [rule.type_id, rule.von, rule.bis]
+    "SELECT start_min, end_min FROM events WHERE plan_id = $4 AND type_id = $1 AND date BETWEEN $2 AND $3",
+    [rule.type_id, rule.von, rule.bis, rule.plan_id]
   );
   return rows.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
 }
 
 // Alle Regeln mit aktuellem Stand (für den Reiter «Regeln» und die KI)
-async function ruleStatus(db = pool) {
+async function ruleStatus(planId, db = pool) {
   const lk = await lookups(db);
   const typeById = new Map(lk.types.map((t) => [t.id, t]));
   const list = [];
   const nameOf = (id) => typeById.get(id)?.name;
-  for (const rule of await loadRules(db, { activeOnly: false })) {
+  for (const rule of await loadRules(db, planId, { activeOnly: false })) {
     if (rule.art === "wochentage") {
       const share = await shareOf(db, rule, typeById);
       list.push({ ...rule, text: rulesData.describe(rule, nameOf), ...share });
@@ -436,8 +438,8 @@ function shareResult(rule, onMinutes, totalMinutes) {
 
 async function shareOf(db, rule, typeById) {
   const { rows } = await db.query(
-    "SELECT type_id, to_char(date, 'YYYY-MM-DD') AS date, start_min, end_min FROM events WHERE type_id = ANY($1::int[])",
-    [rule.type_ids]
+    "SELECT type_id, to_char(date, 'YYYY-MM-DD') AS date, start_min, end_min FROM events WHERE plan_id = $2 AND type_id = ANY($1::int[])",
+    [rule.type_ids, rule.plan_id]
   );
   const days = new Set(rule.wochentage);
   let on = 0;
@@ -458,16 +460,16 @@ function ruleIdOf(value) {
 }
 
 // Warum ist eine Regel (nicht) erfüllt? Kurze Textzeilen für den Reiter «Regeln» und die KI.
-async function diagnoseRule(value, db = pool) {
+async function diagnoseRule(planId, value, db = pool) {
   const id = ruleIdOf(value);
   const lk = await lookups(db);
   const typeById = new Map(lk.types.map((t) => [t.id, t]));
   const nameOf = (tid) => typeById.get(tid)?.name;
-  const rule = (await loadRules(db, { activeOnly: false })).find((r) => r.id === id);
+  const rule = (await loadRules(db, planId, { activeOnly: false })).find((r) => r.id === id);
   if (!rule) throw new PlanningError(`Regel R${id} gibt es nicht.`);
   const h = (min) => hoursText(min);
   const lines = [`R${id}: ${rulesData.describe(rule, nameOf)}${rule.aktiv ? "" : " (inaktiv)"}`];
-  const { rows: events } = await db.query(`SELECT ${EVENT_FIELDS} FROM events`);
+  const { rows: events } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE plan_id = $1`, [planId]);
   const proName = new Map(lk.pros.map((p) => [p.id, p.name]));
   const byPro = (list, type) => {
     const sums = new Map();
@@ -533,7 +535,7 @@ async function diagnoseRule(value, db = pool) {
     const used = events.filter((ev) => ev.type_id === type.id).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
     lines.push(`Kurs-Maximum: ${h(used)} von ${type.max_stunden} h verbraucht${used >= type.max_stunden * 60 - 1 ? " – erreicht, das blockiert weitere Termine" : ""}.`);
   }
-  for (const other of (await loadRules(db)).filter((r) => r.art === "stunden" && r.id !== rule.id && r.type_id === type.id && rulesData.OPS[r.operator].upper)) {
+  for (const other of (await loadRules(db, planId)).filter((r) => r.art === "stunden" && r.id !== rule.id && r.type_id === type.id && rulesData.OPS[r.operator].upper)) {
     if (other.von <= rule.bis && other.bis >= rule.von) {
       lines.push(`Achtung: R${other.id} (${rulesData.describe(other, nameOf)}) begrenzt denselben Kurs im überlappenden Zeitraum.`);
     }
@@ -585,8 +587,8 @@ async function diagnoseRule(value, db = pool) {
 
 // Obergrenzen (genau, höchstens) dürfen durch neue Termine nicht überschritten werden.
 // added/removed: Events mit date, start_min, end_min (bei Änderungen der alte Stand in removed).
-async function assertRules(db, type, added, removed = [], label = "") {
-  const rules = (await loadRules(db)).filter((r) => r.art === "stunden" && r.type_id === type.id && rulesData.OPS[r.operator].upper);
+async function assertRules(db, planId, type, added, removed = [], label = "") {
+  const rules = (await loadRules(db, planId)).filter((r) => r.art === "stunden" && r.type_id === type.id && rulesData.OPS[r.operator].upper);
   for (const rule of rules) {
     const inWindow = (list) => list.filter((ev) => ev.date >= rule.von && ev.date <= rule.bis)
       .reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
@@ -610,6 +612,7 @@ async function assertRules(db, type, added, removed = [], label = "") {
 // regeln_erfuellen: zuerst die Untergrenzen der aktiven Regeln (mindestens, genau, mehr als) auffüllen,
 // verteilt auf passende Pros mit der geringsten Auslastung im Verhältnis zu ihrem Ziel.
 async function autoFill(
+  planId,
   { pros, ziel_prozent, ziele, typen, von, bis, freie_tage_beachten = false, regeln_erfuellen = false } = {},
   { dryRun = false, userId = null } = {}
 ) {
@@ -657,7 +660,7 @@ async function autoFill(
     const spread = (list) => spreadOrder(list.length).map((i) => list[i]);
 
     // Bestehende Belegung, geplante Stunden je Pro, verbrauchte Stunden je Typ und je Regel
-    const { rows: existing } = await db.query(`SELECT ${EVENT_FIELDS} FROM events`);
+    const { rows: existing } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE plan_id = $1`, [planId]);
     const busy = new Map(); // "pro|datum" → [[Beginn, Ende]]
     const planned = new Map();
     const typeUsed = new Map();
@@ -671,7 +674,7 @@ async function autoFill(
       planned.set(ev.pro_id, (planned.get(ev.pro_id) || 0) + minutes);
       typeUsed.set(ev.type_id, (typeUsed.get(ev.type_id) || 0) + minutes);
     }
-    const allRules = await loadRules(db);
+    const allRules = await loadRules(db, planId);
     const nameOf = (id) => typeById.get(id)?.name;
     const rules = allRules.filter((r) => r.art === "stunden").map((r) => ({ ...r, type: typeById.get(r.type_id) }));
     // Anteil-Regeln (Wochentage): Brutto-Minuten an den gewählten Tagen und insgesamt
@@ -839,11 +842,11 @@ async function autoFill(
     if (toInsert.length) {
       const col = (key) => toInsert.map((ev) => ev[key]);
       ({ rows: created } = await db.query(
-        `INSERT INTO events (type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by)
-         SELECT * FROM unnest($1::int[], $2::int[], $3::date[], $4::int[], $5::int[], $6::text[], $7::text[], $8::int[], $9::int[])
+        `INSERT INTO events (plan_id, type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by)
+         SELECT $10, * FROM unnest($1::int[], $2::int[], $3::date[], $4::int[], $5::int[], $6::text[], $7::text[], $8::int[], $9::int[])
          RETURNING ${EVENT_FIELDS}, created_at`,
         [col("type_id"), col("pro_id"), col("date"), col("start_min"), col("end_min"), col("notiz"),
-          col("series_id"), col("series_index"), toInsert.map(() => userId)]
+          col("series_id"), col("series_index"), toInsert.map(() => userId), planId]
       ));
     }
     return { created, errors: [], dryRun, summary, regeln };
@@ -855,15 +858,15 @@ async function autoFill(
 // Angelegte Events werden nur gelöscht, wenn auch der Erstellungszeitpunkt passt
 // (nach einer Wiederherstellung können IDs neu vergeben werden).
 // Ganz oder gar nicht; Konflikte (z. B. Überschneidung mit neueren Events) kommen als errors zurück.
-async function undoChange(undo) {
+async function undoChange(planId, undo) {
   return transaction(false, "done", async (db) => {
     const errors = [];
     let done = 0;
     if (undo.created?.length) {
       const { rowCount } = await db.query(
         `DELETE FROM events e USING unnest($1::int[], $2::timestamptz[]) AS u(id, created_at)
-          WHERE e.id = u.id AND date_trunc('milliseconds', e.created_at) = u.created_at`,
-        [undo.created.map((c) => c.id), undo.created.map((c) => c.created_at)]
+          WHERE e.plan_id = $3 AND e.id = u.id AND date_trunc('milliseconds', e.created_at) = u.created_at`,
+        [undo.created.map((c) => c.id), undo.created.map((c) => c.created_at), planId]
       );
       done += rowCount;
     }
@@ -871,13 +874,13 @@ async function undoChange(undo) {
       const label = `Event ${row.id} (${formatDate(row.date)}): `;
       const { rows } = await db.query("SELECT 1 FROM events WHERE id = $1", [row.id]);
       if (rows.length) throw new PlanningError(`${label}existiert bereits wieder.`);
-      await assertFree(db, row, row.id, label);
+      await assertFree(db, planId, row, row.id, label);
       try {
         await db.query(
-          `INSERT INTO events (id, type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT id FROM users WHERE id = $10), coalesce($11, now()))`,
+          `INSERT INTO events (id, plan_id, type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by, created_at)
+           VALUES ($1, $12, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT id FROM users WHERE id = $10), coalesce($11, now()))`,
           [row.id, row.type_id, row.pro_id, row.date, row.start_min, row.end_min, row.notiz, row.series_id, row.series_index,
-            row.created_by ?? null, row.created_at ?? null]
+            row.created_by ?? null, row.created_at ?? null, planId]
         );
       } catch (err) {
         if (err.code === "23503") throw new PlanningError(`${label}Pro oder Event-Typ gibt es nicht mehr.`);
@@ -887,9 +890,9 @@ async function undoChange(undo) {
     });
     await eachItem(db, undo.updated || [], errors, async (row) => {
       const label = `Event ${row.id}: `;
-      const { rows } = await db.query("SELECT 1 FROM events WHERE id = $1 FOR UPDATE", [row.id]);
+      const { rows } = await db.query("SELECT 1 FROM events WHERE id = $1 AND plan_id = $2 FOR UPDATE", [row.id, planId]);
       if (!rows.length) throw new PlanningError(`${label}wurde inzwischen gelöscht.`);
-      await assertFree(db, row, row.id, label);
+      await assertFree(db, planId, row, row.id, label);
       try {
         await db.query(
           "UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6 WHERE id = $7",

@@ -1,9 +1,10 @@
-// Verlauf (nur Admin): gespeicherte Stände der Events (Zuweisungen), mit «Wiederherstellen».
+// Verlauf des aktuellen Plans: gespeicherte Stände der Events (Zuweisungen), mit «Wiederherstellen»
+// (nur mit Bearbeitungsrecht am Plan).
 (function () {
   const { el } = window.Dates;
   const $ = (sel) => document.querySelector(sel);
 
-  let ctx = null; // { api, toast, reload }
+  let ctx = null; // { api, toast, reload, canEdit }
 
   function formatTime(iso) {
     return new Date(iso).toLocaleString("de-CH", {
@@ -50,7 +51,7 @@
       const action = el("td");
       if (v.id === latestId) {
         action.append(el("span", "badge", "aktuell"));
-      } else {
+      } else if (ctx.canEdit()) {
         const btn = el("button", "btn sm", "Wiederherstellen");
         btn.type = "button";
         btn.title = "Die Events (Zuweisungen) auf diesen Stand zurücksetzen; Pros und Event-Typen bleiben";

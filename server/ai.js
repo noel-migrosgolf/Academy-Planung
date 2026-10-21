@@ -13,6 +13,7 @@ const auth = require("./auth");
 const planning = require("./planning");
 const history = require("./history");
 const { ValidationError } = require("./events");
+const plans = require("./plans");
 
 const MODEL = process.env.AI_MODEL || "claude-opus-5-5";
 const EFFORT = process.env.AI_EFFORT || "low";
@@ -45,7 +46,10 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS ai_chats_owner ON ai_chats (owner, updated_at DESC);
     ALTER TABLE ai_chats
       ADD COLUMN IF NOT EXISTS tools   JSONB,
-      ADD COLUMN IF NOT EXISTS running BOOLEAN NOT NULL DEFAULT false;
+      ADD COLUMN IF NOT EXISTS running BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS plan_id INTEGER REFERENCES plans(id) ON DELETE CASCADE;
+    -- Chats aus der Zeit vor den Plänen gehören zum ältesten Plan (Hauptplan).
+    UPDATE ai_chats SET plan_id = (SELECT min(id) FROM plans) WHERE plan_id IS NULL;
     -- Nach einem Neustart läuft keine Antwort mehr.
     UPDATE ai_chats SET running = false WHERE running;
     CREATE TABLE IF NOT EXISTS settings (
@@ -74,7 +78,8 @@ Arbeitsweise
 - Für grosse Mengen (z. B. «alle Pros zu 65 % auslasten») immer auslasten verwenden statt events_anlegen: der Server verteilt die Serien selbst.
 - nur_pruefen nur verwenden, wenn der Benutzer einen Vorschlag ohne Speichern möchte.
 - Ist ein Auftrag unklar oder fehlt Wesentliches, frag kurz nach, statt zu raten.
-- Jede Änderung erscheint im Chat mit einem Knopf «Rückgängig». Selbst zurücksetzen kannst du mit verlauf und version_wiederherstellen (nur für Admins).
+- Jede Änderung erscheint im Chat mit einem Knopf «Rückgängig». Selbst zurücksetzen kannst du mit verlauf und version_wiederherstellen.
+- Du arbeitest immer im Plan des Chats (Pläne sind Varianten der Planung); ist er nur zum Ansehen freigegeben, kannst du nur lesen.
 
 Antworten: kurz, auf Deutsch (Schweizer Schreibweise, ss statt ß), Datum als TT.MM.JJJJ. Nach Änderungen eine knappe Zusammenfassung (was, wer, wie viele Stunden); lange Listen nur auf Wunsch.`;
 
@@ -239,11 +244,11 @@ const TOOLS = [
   AUTOFILL_TOOL,
   RULE_CHECK_TOOL,
   LEGACY_TOOLS[4],
-  { ...LEGACY_TOOLS[5], description: "Setzt die Events (Zuweisungen) auf den Stand einer Version zurück; Pros und Typen bleiben (nur Admins)." },
+  { ...LEGACY_TOOLS[5], description: "Setzt die Events (Zuweisungen) des Plans auf den Stand einer Version zurück; Pros und Typen bleiben." },
 ];
 
 const actor = (session) => `${session.name} (KI)`;
-const canRestore = (session) => ["admin", "api"].includes(session.role);
+const READ_ONLY = "FEHLER: Dieser Plan ist für den Benutzer nur zum Ansehen freigegeben; Änderungen sind nicht möglich.";
 
 // Ergebnis einer Sammel-Aktion als kurzer Text für das Modell
 function resultText(result, verb, list) {
@@ -257,10 +262,10 @@ function resultText(result, verb, list) {
 }
 
 // Stand vor einer Änderung: die neueste Version, falls sie den aktuellen Daten entspricht, sonst eine neue.
-async function versionBefore(session) {
-  const latest = await history.latestId();
-  if (latest && (await history.matchesCurrent(latest))) return latest;
-  return history.record(actor(session), "Stand vor KI-Änderung");
+async function versionBefore(ctx) {
+  const latest = await history.latestId(ctx.planId);
+  if (latest && (await history.matchesCurrent(ctx.planId, latest))) return latest;
+  return history.record(ctx.planId, actor(ctx.session), "Stand vor KI-Änderung");
 }
 
 // Führt eine Änderung aus und hält sie als rückgängig machbare Version fest.
@@ -269,43 +274,48 @@ async function change(ctx, describe, run, undoOf) {
   const result = await run();
   if (result.dryRun || result.errors.length) return result;
   const text = await describe(result);
-  await history.record(actor(ctx.session), text);
+  await history.record(ctx.planId, actor(ctx.session), text);
   ctx.items.push({ type: "change", text, undo: undoOf(result) });
   return result;
 }
 
+// Werkzeuge, die Daten ändern (ausser im Probelauf)
+const CHANGING = new Set(["events_anlegen", "events_aendern", "events_loeschen", "auslasten", "version_wiederherstellen"]);
+
 async function runTool(ctx, name, input) {
   const dryRun = input.nur_pruefen === true;
+  if (CHANGING.has(name) && !dryRun && !ctx.canEdit) return READ_ONLY;
+  const planId = ctx.planId;
   switch (name) {
     case "daten_lesen": {
-      const o = await planning.overview({ from: input.von, to: input.bis, pro: input.pro });
+      const o = await planning.overview(planId, { from: input.von, to: input.bis, pro: input.pro });
       return planning.overviewText(o, { maxEvents: 300, parts: input.teile?.length ? input.teile : undefined });
     }
     case "events_anlegen": {
       const r = await change(ctx,
         async (r) => `KI plant: ${await planning.describeEvents(r.created)}`,
-        () => planning.bulkCreate(input.events, { dryRun, userId: ctx.session.id || null }),
+        () => planning.bulkCreate(planId, input.events, { dryRun, userId: ctx.session.id || null }),
         (r) => ({ created: r.created.map((e) => ({ id: e.id, created_at: e.created_at })) }));
       return resultText(r, r.dryRun ? "anlegen" : "angelegt", r.created);
     }
     case "events_aendern": {
       const r = await change(ctx,
         async (r) => `KI ändert: ${await planning.describeEvents(r.updated)}`,
-        () => planning.bulkUpdate(input.aenderungen, { dryRun }),
+        () => planning.bulkUpdate(planId, input.aenderungen, { dryRun }),
         (r) => ({ updated: r.previous }));
       return resultText(r, r.dryRun ? "ändern" : "geändert", r.updated);
     }
     case "events_loeschen": {
       const r = await change(ctx,
         async (r) => `KI löscht: ${await planning.describeEvents(r.deleted)}`,
-        () => planning.bulkDelete(input.ids, { serie: input.ganze_serie === true, dryRun }),
+        () => planning.bulkDelete(planId, input.ids, { serie: input.ganze_serie === true, dryRun }),
         (r) => ({ deleted: r.deleted }));
       return resultText(r, r.dryRun ? "löschen" : "gelöscht", r.deleted);
     }
     case "auslasten": {
       const r = await change(ctx,
         async (r) => `KI lastet aus: ${r.summary.length} Pros auf ${input.ziel_prozent} % (${r.created.length} Termine)`,
-        () => planning.autoFill(input, { dryRun, userId: ctx.session.id || null }),
+        () => planning.autoFill(planId, input, { dryRun, userId: ctx.session.id || null }),
         (r) => ({ created: r.created.map((e) => ({ id: e.id, created_at: e.created_at })) }));
       const lines = r.summary.map((s) => s.hinweis && s.vorher_prozent === undefined
         ? `${s.pro}: ${s.hinweis}`
@@ -314,18 +324,17 @@ async function runTool(ctx, name, input) {
       return `${r.dryRun ? "Prüfung, nichts gespeichert" : `OK, ${r.created.length} Termine angelegt`}:\n${[...lines, ...ruleLines].join("\n")}`;
     }
     case "regel_pruefen":
-      return (await planning.diagnoseRule(input.regel)).join("\n");
+      return (await planning.diagnoseRule(planId, input.regel)).join("\n");
     case "verlauf": {
       const n = Math.min(Math.max(Number.parseInt(input.anzahl, 10) || 10, 1), 50);
-      const list = (await history.list()).slice(0, n);
+      const list = (await history.list(planId)).slice(0, n);
       return list.map((v) =>
         [v.id, new Date(v.created_at).toLocaleString("de-CH", { timeZone: "Europe/Zurich" }), v.actor, v.description].join("|")
       ).join("\n");
     }
     case "version_wiederherstellen": {
-      if (!canRestore(ctx.session)) return "FEHLER: Nur Admins dürfen Versionen wiederherstellen.";
-      const before = await versionBefore(ctx.session);
-      const after = await history.restore(Number.parseInt(input.version_id, 10) || 0, actor(ctx.session));
+      const before = await versionBefore(ctx);
+      const after = await history.restore(planId, Number.parseInt(input.version_id, 10) || 0, actor(ctx.session));
       if (!after) return "FEHLER: Version nicht gefunden.";
       ctx.items.push({ type: "change", text: `KI setzt zurück auf Version #${input.version_id}`, before, after });
       return `OK, Stand von Version #${input.version_id} wiederhergestellt.`;
@@ -416,8 +425,8 @@ function appendUser(messages, blocks) {
 }
 
 // onProgress(items) wird nach jedem Schritt aufgerufen (Live-Anzeige im Chat).
-async function converse(chat, session, text, onProgress) {
-  const ctx = { session, items: [] };
+async function converse(chat, session, text, onProgress, canEdit) {
+  const ctx = { session, planId: chat.plan_id, canEdit, items: [] };
   const tools = chat.tools || LEGACY_TOOLS;
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Zurich" });
   const notes = chat.notes.map((n) => ({ type: "text", text: `[Hinweis: ${n}]` }));
@@ -487,14 +496,17 @@ async function converse(chat, session, text, onProgress) {
 
 const router = express.Router();
 router.use(auth.requireLogin);
+// Chats gehören zum aktuellen Plan (Header X-Plan-Id)
+router.use("/chats", plans.withPlan);
 
 const ownerOf = (session) => (session.id ? `user:${session.id}` : session.role);
 const busy = new Set(); // Chats, die gerade antworten
 
 async function loadChat(req, res) {
-  const { rows } = await pool.query("SELECT * FROM ai_chats WHERE id = $1 AND owner = $2", [
+  const { rows } = await pool.query("SELECT * FROM ai_chats WHERE id = $1 AND owner = $2 AND plan_id = $3", [
     Number.parseInt(req.params.id, 10) || 0,
     ownerOf(req.session),
+    req.plan.id,
   ]);
   if (!rows[0]) res.status(404).json({ error: "Chat nicht gefunden." });
   return rows[0];
@@ -532,15 +544,16 @@ router.put("/rules", auth.requireAdmin, async (req, res) => {
 
 router.get("/chats", async (req, res) => {
   const { rows } = await pool.query(
-    "SELECT id, title, updated_at FROM ai_chats WHERE owner = $1 ORDER BY updated_at DESC LIMIT 30",
-    [ownerOf(req.session)]
+    "SELECT id, title, updated_at FROM ai_chats WHERE owner = $1 AND plan_id = $2 ORDER BY updated_at DESC LIMIT 30",
+    [ownerOf(req.session), req.plan.id]
   );
   res.json({ chats: rows });
 });
 
 router.post("/chats", async (req, res) => {
-  const { rows } = await pool.query("INSERT INTO ai_chats (owner, system, tools) VALUES ($1, $2, $3) RETURNING *", [
+  const { rows } = await pool.query("INSERT INTO ai_chats (owner, plan_id, system, tools) VALUES ($1, $2, $3, $4) RETURNING *", [
     ownerOf(req.session),
+    req.plan.id,
     await systemPrompt(),
     JSON.stringify(TOOLS),
   ]);
@@ -553,7 +566,11 @@ router.get("/chats/:id", async (req, res) => {
 });
 
 router.delete("/chats/:id", async (req, res) => {
-  await pool.query("DELETE FROM ai_chats WHERE id = $1 AND owner = $2", [Number.parseInt(req.params.id, 10) || 0, ownerOf(req.session)]);
+  await pool.query("DELETE FROM ai_chats WHERE id = $1 AND owner = $2 AND plan_id = $3", [
+    Number.parseInt(req.params.id, 10) || 0,
+    ownerOf(req.session),
+    req.plan.id,
+  ]);
   res.json({ ok: true });
 });
 
@@ -578,10 +595,10 @@ router.post("/chats/:id/messages", async (req, res) => {
     busy.delete(chat.id);
     throw err;
   }
-  runChat(chat, req.session, text, base).finally(() => busy.delete(chat.id));
+  runChat(chat, req.session, text, base, req.plan.can_edit).finally(() => busy.delete(chat.id));
 });
 
-async function runChat(chat, session, text, base) {
+async function runChat(chat, session, text, base, canEdit) {
   const save = (items) =>
     pool.query("UPDATE ai_chats SET display = $2, updated_at = now() WHERE id = $1", [chat.id, JSON.stringify([...base, ...items])]);
   let items = [];
@@ -589,7 +606,7 @@ async function runChat(chat, session, text, base) {
     const result = await converse(chat, session, text, async (current) => {
       items = current;
       await save(current);
-    });
+    }, canEdit);
     await pool.query(
       `UPDATE ai_chats SET messages = $2, display = $3, notes = $4, usage = $5, running = false, updated_at = now()
         WHERE id = $1`,
@@ -608,8 +625,8 @@ async function runChat(chat, session, text, base) {
 
 // Macht eine Änderung aus dem Chat rückgängig. Event-Änderungen werden gezielt zurückgenommen
 // (andere Daten bleiben unberührt). Eine von der KI wiederhergestellte Version setzt dagegen den ganzen
-// Stand zurück; wurde seither weiter geplant, ist dafür «force» nötig – das dürfen nur Admins.
-router.post("/chats/:id/undo", async (req, res) => {
+// Stand des Plans zurück; wurde seither weiter geplant, ist dafür «force» nötig.
+router.post("/chats/:id/undo", plans.requireEdit, async (req, res) => {
   const chat = await loadChat(req, res);
   if (!chat) return;
   const index = Number.parseInt(req.body.index, 10);
@@ -618,26 +635,22 @@ router.post("/chats/:id/undo", async (req, res) => {
   if (item.undone) return res.status(409).json({ error: "Diese Änderung wurde bereits rückgängig gemacht." });
   if (chat.running) return res.status(409).json({ error: "Die KI arbeitet noch. Bitte warten, bis sie fertig ist." });
   if (item.undo) {
-    const result = await planning.undoChange(item.undo);
+    const result = await planning.undoChange(req.plan.id, item.undo);
     if (result.errors.length) {
       return res.status(409).json({
         error: `Rückgängig nicht möglich, nichts geändert: ${result.errors.map((e) => e.fehler).join(" ")}`,
       });
     }
-    await history.record(`${req.session.name} (KI rückgängig)`, `Rückgängig: ${item.text}`);
+    await history.record(req.plan.id, `${req.session.name} (KI rückgängig)`, `Rückgängig: ${item.text}`);
     return markUndone(res, chat, index, `Der Benutzer hat «${item.text}» rückgängig gemacht (nur diese Änderung).`);
   }
-  if (!(await history.matchesCurrent(item.after))) {
-    if (!(req.body.force === true && canRestore(req.session))) {
-      return res.status(409).json({
-        error: canRestore(req.session)
-          ? "Seit dieser Änderung wurde weiter geplant. Zurücksetzen verwirft auch diese späteren Änderungen."
-          : "Seit dieser Änderung wurde weiter geplant. Nur Admins können trotzdem zurücksetzen.",
-        canForce: canRestore(req.session),
-      });
-    }
+  if (!(await history.matchesCurrent(req.plan.id, item.after)) && req.body.force !== true) {
+    return res.status(409).json({
+      error: "Seit dieser Änderung wurde weiter geplant. Zurücksetzen verwirft auch diese späteren Änderungen.",
+      canForce: true,
+    });
   }
-  if (!(await history.restore(item.before, `${req.session.name} (KI rückgängig)`))) {
+  if (!(await history.restore(req.plan.id, item.before, `${req.session.name} (KI rückgängig)`))) {
     return res.status(404).json({ error: "Die Version vor dieser Änderung ist nicht mehr vorhanden." });
   }
   await markUndone(res, chat, index, `Der Benutzer hat «${item.text}» rückgängig gemacht; die Daten sind wieder wie vor dieser Änderung.`);

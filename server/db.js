@@ -173,6 +173,39 @@ async function migrate() {
     );
   `);
 
+  // Pläne: jeder Benutzer kann mehrere Pläne haben und sie teilen (ansehen oder bearbeiten).
+  // Termine und Regeln gehören zu einem Plan; Pros und Event-Typen sind gemeinsam.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS plans (
+      id         SERIAL PRIMARY KEY,
+      name       TEXT NOT NULL,
+      owner_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS plan_shares (
+      plan_id  INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+      user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      can_edit BOOLEAN NOT NULL DEFAULT false,
+      PRIMARY KEY (plan_id, user_id)
+    );
+    ALTER TABLE events ADD COLUMN IF NOT EXISTS plan_id INTEGER REFERENCES plans(id) ON DELETE CASCADE;
+    ALTER TABLE rules  ADD COLUMN IF NOT EXISTS plan_id INTEGER REFERENCES plans(id) ON DELETE CASCADE;
+    CREATE INDEX IF NOT EXISTS events_plan_date_idx ON events (plan_id, date);
+  `);
+  // Bisherige Daten (ohne Plan) bilden den «Hauptplan» von Noel.
+  const { rows: orphans } = await pool.query(
+    "SELECT (SELECT count(*) FROM events WHERE plan_id IS NULL) + (SELECT count(*) FROM rules WHERE plan_id IS NULL) AS n, (SELECT count(*) FROM plans) AS plans"
+  );
+  if (Number(orphans[0].n) > 0 || Number(orphans[0].plans) === 0) {
+    const { rows: main } = await pool.query(
+      `INSERT INTO plans (name, owner_id) VALUES ('Hauptplan', (SELECT id FROM users WHERE username = 'noel'))
+       RETURNING id`
+    );
+    await pool.query("UPDATE events SET plan_id = $1 WHERE plan_id IS NULL", [main[0].id]);
+    await pool.query("UPDATE rules SET plan_id = $1 WHERE plan_id IS NULL", [main[0].id]);
+  }
+  await pool.query("ALTER TABLE events ALTER COLUMN plan_id SET NOT NULL; ALTER TABLE rules ALTER COLUMN plan_id SET NOT NULL;");
+
   // Events mit fester Zeit an ihren Typ angleichen (Puffer am Ende bei pauschalen Typen).
   await pool.query(events.SYNC_FIXED_EVENTS_SQL, [null]);
 

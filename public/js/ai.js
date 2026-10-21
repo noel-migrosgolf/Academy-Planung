@@ -346,5 +346,11 @@
     $("#ki-rules-save").addEventListener("click", saveRules);
   }
 
-  window.KiPage = { init, show };
+  // Anderer Plan: Chats gehören zum Plan, daher neu laden
+  function reset() {
+    chat = null;
+    chats = [];
+  }
+
+  window.KiPage = { init, show, reset };
 })();

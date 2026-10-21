@@ -26,6 +26,17 @@
   let pros = [];
 
   Planner.init(pages.calendar);
+  PlansUI.init({
+    api,
+    toast,
+    session: () => session,
+    // Anderer Plan: alle Ansichten neu laden
+    onChange: async () => {
+      KiPage.reset();
+      await loadData();
+      showPage(currentPage);
+    },
+  });
   ProsPage.init({
     api,
     toast,
@@ -36,16 +47,18 @@
     toast,
     reload: () => loadData(),
     isAdmin: () => session?.role === "admin",
+    canEdit: () => PlansUI.canEdit(),
   });
   HistoryPage.init({
     api,
     toast,
     reload: () => loadData(),
+    canEdit: () => PlansUI.canEdit(),
   });
   RulesPage.init({
     api,
     toast,
-    isAdmin: () => session?.role === "admin",
+    canEdit: () => PlansUI.canEdit(),
   });
   AutoFillPage.init({
     api,
@@ -58,10 +71,14 @@
     reload: () => loadData(),
   });
 
-  async function api(path, { method = "GET", body } = {}) {
+  // plan: false = ohne Plan-Bezug (z. B. Pläne selbst verwalten)
+  async function api(path, { method = "GET", body, plan = true } = {}) {
+    const headers = {};
+    if (body) headers["Content-Type"] = "application/json";
+    if (plan && PlansUI.currentId()) headers["X-Plan-Id"] = String(PlansUI.currentId());
     const res = await fetch(`/api${path}`, {
       method,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
+      headers,
       body: body ? JSON.stringify(body) : undefined,
       credentials: "same-origin",
     });
@@ -117,7 +134,7 @@
   );
 
   function showPage(name) {
-    if ((name === "users" || name === "history") && session?.role !== "admin") name = "calendar";
+    if (name === "users" && session?.role !== "admin") name = "calendar";
     currentPage = name;
     for (const [key, el] of Object.entries(pages)) el.hidden = key !== name;
     $$(".nav button[data-page]").forEach((b) => b.classList.toggle("on", b.dataset.page === name));
@@ -147,9 +164,14 @@
     if (loggedIn) {
       $("#session-name").textContent = session.name;
       $("#session-avatar").textContent = initials(session.name);
-      showPage(currentPage);
-      loadData();
+      PlansUI.load()
+        .catch((err) => toast(err.message))
+        .finally(() => {
+          showPage(currentPage);
+          loadData();
+        });
     } else {
+      PlansUI.reset();
       for (const el of Object.values(pages)) el.hidden = true;
       renderUserPicker();
       lstep("user");

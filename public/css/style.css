@@ -484,6 +484,28 @@ fieldset > .btn { align-self: flex-start; }
 .af-warn { color: var(--crit-ink); font-weight: 600; }
 #af-note { margin-right: auto; color: var(--ink-3); font-size: 12.5px; align-self: center; }
 
+/* Pläne */
+.plan-bar { display: flex; align-items: center; gap: 8px; color: var(--ink-3); }
+.plan-bar svg { width: 16px; height: 16px; flex: none; }
+.plan-bar select { max-width: 240px; font-weight: 600; color: var(--ink); }
+.plan-new { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; }
+.plan-new input[type="text"] { flex: 1 1 200px; }
+.plan-list { display: flex; flex-direction: column; margin-top: 10px; border-top: 1px solid var(--line); }
+.plan-row { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+.plan-row.on .plan-name { color: var(--accent-ink); }
+.plan-main { flex: 1; min-width: 0; }
+.plan-name { font-weight: 650; }
+.plan-name input { height: 30px; }
+.plan-meta { font-size: 12px; color: var(--ink-3); }
+.plan-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.plan-btns .btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
+.plan-share { padding: 10px 12px; margin: 0 0 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+.plan-share-hd { font-weight: 650; font-size: 12.5px; margin-bottom: 6px; }
+.plan-share-list { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.plan-share-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; font-weight: 500; color: var(--ink); font-size: 13px; }
+.plan-actions { padding: 0 16px 14px; }
+.plan-readonly [data-new-event] { display: none; }
+
 /* Regeln */
 .rule-sentence { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: 14px; }
 .rule-sentence input[type="date"] { width: 150px; }
@@ -618,6 +640,8 @@ fieldset > .btn { align-self: flex-start; }
   .brand { min-width: 0; }
   .page { padding: 14px 16px; }
   .nav button.nav-ai { margin-bottom: 0; }
+  .plan-bar svg { display: none; }
+  .plan-bar select { max-width: 130px; }
   .ki-chat { height: calc(100vh - 150px); }
   .filters { padding: 10px 16px; }
   .navi .lbl { min-width: 0; }

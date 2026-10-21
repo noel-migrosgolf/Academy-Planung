@@ -1,12 +1,12 @@
 // Regeln (Reiter «Regeln»), zwei Arten:
 //   stunden    – «Zwischen Datum x und y müssen <Vergleich> z Sollstunden von Kurs k stattfinden.»
 //   wochentage – «Mindestens x % der Sollstunden von Kursen … müssen an Tagen … stattfinden.»
-// Anlegen, bearbeiten, (de)aktivieren und löschen nur für Admins; der Stand wird für alle angezeigt.
+// Regeln gehören zum aktuellen Plan; anlegen, bearbeiten, (de)aktivieren und löschen darf, wer den Plan bearbeiten darf.
 (function () {
   const { el } = window.Dates;
   const $ = (sel) => document.querySelector(sel);
 
-  let ctx = null; // { api, toast, isAdmin }
+  let ctx = null; // { api, toast, canEdit }
   let data = { types: [] };
   let rules = [];
   let editing = null;
@@ -53,7 +53,7 @@
       ? `${rules.filter((r) => r.aktiv && r.erfuellt).length} von ${rules.filter((r) => r.aktiv).length} aktiven erfüllt`
       : "";
     if (!rules.length) {
-      box.append(el("p", "empty", ctx.isAdmin() ? "Noch keine Regeln. Lege oben die erste an." : "Noch keine Regeln."));
+      box.append(el("p", "empty", ctx.canEdit() ? "Noch keine Regeln. Lege oben die erste an." : "Noch keine Regeln."));
       return;
     }
     for (const r of rules) {
@@ -82,7 +82,7 @@
       whyBtn.addEventListener("click", () => toggleWhy(r, why));
       actions.append(whyBtn);
       row.append(actions);
-      if (ctx.isAdmin()) {
+      if (ctx.canEdit()) {
         const button = (label, cls, run) => {
           const b = el("button", `btn sm${cls}`, label);
           b.type = "button";
@@ -252,7 +252,7 @@
   }
 
   function show() {
-    $("#rule-form-card").hidden = !ctx.isAdmin();
+    $("#rule-form-card").hidden = !ctx.canEdit();
     fillTypes();
     load();
   }

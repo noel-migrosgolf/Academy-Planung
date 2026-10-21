@@ -6,7 +6,7 @@
 
   const WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
 
-  let ctx = null; // { api, toast, reload, isAdmin }
+  let ctx = null; // { api, toast, reload, isAdmin, canEdit }
   let data = { pros: [], types: [], events: [] };
   let editingEvent = null;
   let editingType = null;
@@ -262,6 +262,10 @@
 
   // event: bestehendes Event bearbeiten; prefill: { pro_id, date, start_min, end_min } für ein neues
   function openEvent(event, prefill = {}) {
+    if (!event && !ctx.canEdit()) {
+      ctx.toast("Dieser Plan ist für dich nur zum Ansehen freigegeben.");
+      return;
+    }
     if (!data.types.length) {
       ctx.toast("Es gibt noch keinen Event-Typ. Ein Admin muss zuerst einen anlegen.");
       return;
@@ -310,6 +314,7 @@
   // Löscht ohne Rückfrage; die Meldung bietet «Rückgängig» an.
   // Termine einer Serie werden immer gemeinsam gelöscht und wiederhergestellt.
   async function deleteEvent(ev) {
+    if (!ctx.canEdit()) return ctx.toast("Dieser Plan ist für dich nur zum Ansehen freigegeben.");
     const series = seriesOf(ev);
     await ctx.api(`/events/${ev.id}${ev.series_id ? "?serie=1" : ""}`, { method: "DELETE" });
     const t = typeOf(ev);

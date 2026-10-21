@@ -91,7 +91,8 @@
     renderTypes();
     renderPros();
     $("#af-preview").disabled = busy;
-    $("#af-run").disabled = busy;
+    $("#af-run").disabled = busy || !PlansUI.canEdit();
+    $("#af-run").title = PlansUI.canEdit() ? "" : "Dieser Plan ist für dich nur zum Ansehen freigegeben.";
   }
 
   function request(dryRun) {
