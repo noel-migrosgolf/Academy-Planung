@@ -13,8 +13,37 @@
     document.removeEventListener("scroll", close, true);
   }
 
+  // Ein Klick ausserhalb schliesst nur das Menü und löst sonst nichts aus:
+  // Das Drücken wird abgefangen und der dazugehörige Klick bzw. Rechtsklick verschluckt.
   function onOutside(e) {
-    if (menu && !menu.contains(e.target)) close();
+    if (!menu || menu.contains(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+    swallowNext();
+  }
+
+  function swallowNext() {
+    const types = ["mousedown", "mouseup", "click", "auxclick", "contextmenu"];
+    const swallow = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (ev.type === "click" || ev.type === "contextmenu" || ev.type === "auxclick") done();
+    };
+    const done = () => {
+      types.forEach((t) => document.removeEventListener(t, swallow, true));
+      document.removeEventListener("pointerup", release, true);
+      document.removeEventListener("pointercancel", release, true);
+    };
+    // Nach dem Loslassen folgen Klick bzw. Rechtsklick noch im selben Durchlauf;
+    // danach wieder freigeben, auch wenn kein Klick kam (z. B. beim Ziehen).
+    const release = (ev) => {
+      ev.stopPropagation();
+      setTimeout(done, 0);
+    };
+    types.forEach((t) => document.addEventListener(t, swallow, true));
+    document.addEventListener("pointerup", release, true);
+    document.addEventListener("pointercancel", release, true);
   }
 
   function onKey(e) {
