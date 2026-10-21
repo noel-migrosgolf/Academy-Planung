@@ -23,6 +23,12 @@
     return ((ev.end_min - ev.start_min) * per30) / 30;
   }
 
+  // Ende des Unterrichts: Der Unterricht beginnt pünktlich, der ganze Puffer
+  // (Brutto − Netto) liegt am Ende des Events.
+  function lessonEnd(ev) {
+    return Math.round(ev.start_min + minutesOf(ev, "netto"));
+  }
+
   // 50 → "0:50 h", 90 → "1:30 h"
   function formatHM(min) {
     const total = Math.round(min);
@@ -66,11 +72,13 @@
       return;
     }
     const ev = { type_id: t.id, start_min: start, end_min: end };
+    const lesson = lessonEnd(ev);
     box.replaceChildren(
-      el("span", "", `Dauer ${formatHM(end - start)}`),
       el("span", "", `Brutto ${formatHM(minutesOf(ev, "brutto"))}`),
-      el("span", "", `Netto ${formatHM(minutesOf(ev, "netto"))}`)
+      el("span", "", `Netto ${formatHM(minutesOf(ev, "netto"))}`),
+      el("span", "", `Unterricht ${clock(start)}–${clock(lesson)}`)
     );
+    if (lesson < end) box.append(el("span", "", `Puffer ${clock(lesson)}–${clock(end)}`));
   }
 
   // event: bestehendes Event bearbeiten; prefill: { pro_id, date, start_min, end_min } für ein neues
@@ -272,5 +280,5 @@
     $("#btn-new-type").addEventListener("click", () => openType(null));
   }
 
-  window.Events = { init, setData, render, openEvent, minutesOf, formatHM, formatShortHours, clock, typeOf };
+  window.Events = { init, setData, render, openEvent, minutesOf, lessonEnd, formatHM, formatShortHours, clock, typeOf };
 })();

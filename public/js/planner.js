@@ -121,6 +121,7 @@
     const t = E.typeOf(ev);
     const lines = [
       `${t?.name || "Event"} · ${E.clock(ev.start_min)}–${E.clock(ev.end_min)}`,
+      `Unterricht ${E.clock(ev.start_min)}–${E.clock(E.lessonEnd(ev))} · Puffer bis ${E.clock(ev.end_min)}`,
       `Brutto ${E.formatHM(E.minutesOf(ev, "brutto"))} · Netto ${E.formatHM(E.minutesOf(ev, "netto"))}`,
     ];
     if (ev.notiz) lines.push(ev.notiz);
@@ -134,7 +135,7 @@
   const snap = (min) => Math.round(min / SNAP_MIN) * SNAP_MIN;
   const limit = (min) => Math.max(DAY_START * 60, Math.min(DAY_END * 60, min));
 
-  // Event-Block: Netto-Anteil voll, Puffer (Brutto − Netto) heller
+  // Event-Block: Unterricht (netto) ab Beginn voll, Puffer am Ende schraffiert
   function eventBlock(ev) {
     const t = E.typeOf(ev);
     const block = el("div", "ev");
@@ -143,16 +144,16 @@
     const bottom = minToY(Math.min(ev.end_min, DAY_END * 60));
     block.style.top = `${top}px`;
     block.style.height = `${Math.max(bottom - top, 12)}px`;
-    if (t && t.brutto_min > 0) {
-      const nettoPx = (SLOT_PX * t.netto_min) / 30;
-      block.style.setProperty("--netto", `${nettoPx}px`);
-      block.style.setProperty("--slot", `${SLOT_PX}px`);
-    }
+    const lesson = E.lessonEnd(ev);
+    const lessonPx = Math.max(0, minToY(Math.min(lesson, DAY_END * 60)) - top);
+    block.style.setProperty("--netto", `${lessonPx}px`);
     block.title = eventTitle(ev);
     block.append(
       el("b", "", t?.name || "Event"),
       el("span", "", `${E.clock(ev.start_min)}–${E.clock(ev.end_min)}`),
-      el("span", "ev-hours", `${E.formatHM(E.minutesOf(ev, "brutto"))} brutto · ${E.formatHM(E.minutesOf(ev, "netto"))} netto`)
+      el("span", "ev-hours", lesson < ev.end_min
+        ? `Unterricht bis ${E.clock(lesson)} · Puffer ${E.formatHM(ev.end_min - lesson)}`
+        : "ohne Puffer")
     );
     block.addEventListener("pointerdown", (e) => e.stopPropagation());
     block.addEventListener("click", () => E.openEvent(ev));
@@ -210,7 +211,7 @@
     const date = state.date;
     const list = visiblePros();
     const title = `${D.WEEKDAYS_LONG[D.weekday(date)]}, ${D.formatShort(date)}`;
-    const hd = cardHead(title, rangeSummary([date], list), "Aufziehen oder klicken = neues Event · voll = netto, schraffiert = Puffer");
+    const hd = cardHead(title, rangeSummary([date], list), "Aufziehen oder klicken = neues Event · voll = Unterricht (netto), schraffiert = Puffer am Ende");
     const badge = holidayBadge(date);
     if (badge) hd.insertBefore(badge, hd.children[1]);
     card.appendChild(hd);
