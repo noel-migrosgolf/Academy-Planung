@@ -1,4 +1,4 @@
-// Verlauf (nur Admin): alle gespeicherten Versionen der Daten, mit «Wiederherstellen».
+// Verlauf (nur Admin): gespeicherte Stände der Events (Zuweisungen), mit «Wiederherstellen».
 (function () {
   const { el } = window.Dates;
   const $ = (sel) => document.querySelector(sel);
@@ -53,7 +53,7 @@
       } else {
         const btn = el("button", "btn sm", "Wiederherstellen");
         btn.type = "button";
-        btn.title = "Pros, Event-Typen und Events auf diesen Stand zurücksetzen";
+        btn.title = "Die Events (Zuweisungen) auf diesen Stand zurücksetzen; Pros und Event-Typen bleiben";
         btn.addEventListener("click", () => restore(v, latestId));
         action.append(btn);
       }
@@ -62,7 +62,7 @@
         el("td", "tab", formatTime(v.created_at)),
         el("td", "", v.actor),
         el("td", "", v.description),
-        el("td", "tab muted", `${v.pros} Pros · ${v.event_types} Typen · ${v.events} Events`),
+        el("td", "tab muted", `${v.events} Events`),
         action
       );
       tbody.append(tr);

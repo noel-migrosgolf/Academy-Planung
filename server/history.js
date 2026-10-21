@@ -1,7 +1,7 @@
-// Versionsverlauf: Nach jeder erfolgreichen Änderung an Pros, Event-Typen oder Events
-// wird der gesamte Datenstand als Version gespeichert. Eine Version lässt sich
-// wiederherstellen; das Wiederherstellen ist selbst wieder eine Version.
-// Benutzerkonten sind bewusst ausgenommen (Passwörter, Zugänge).
+// Versionsverlauf der Zuweisungen: Nach jeder erfolgreichen Änderung an den Events
+// (welcher Pro wann welchen Kurs hat) wird der Stand aller Events als Version gespeichert.
+// Eine Version lässt sich wiederherstellen; das ist selbst wieder eine Version.
+// Pros, Event-Typen und Benutzerkonten sind bewusst ausgenommen (werden manuell gepflegt).
 
 const { pool } = require("./db");
 
@@ -17,17 +17,14 @@ async function migrate() {
       data        JSONB NOT NULL
     );
   `);
+  // Ältere Versionen enthielten auch Pros und Event-Typen; sie werden einmalig gelöscht.
+  await pool.query("DELETE FROM versions WHERE data ? 'pros'");
   const { rows } = await pool.query("SELECT count(*)::int AS n FROM versions");
   if (rows[0].n === 0) await record("System", "Ausgangsstand");
 }
 
 async function snapshot(db) {
-  const { rows } = await db.query(`
-    SELECT
-      (SELECT coalesce(jsonb_agg(p ORDER BY p.id), '[]') FROM pros p)        AS pros,
-      (SELECT coalesce(jsonb_agg(t ORDER BY t.id), '[]') FROM event_types t) AS event_types,
-      (SELECT coalesce(jsonb_agg(e ORDER BY e.id), '[]') FROM events e)      AS events
-  `);
+  const { rows } = await db.query("SELECT coalesce(jsonb_agg(e ORDER BY e.id), '[]') AS events FROM events e");
   return rows[0];
 }
 
@@ -53,25 +50,22 @@ async function latestId(db = pool) {
 async function matchesCurrent(versionId) {
   const current = await snapshot(pool);
   const { rows } = await pool.query(
-    `SELECT data->'pros' = $2::jsonb AND data->'event_types' = $3::jsonb AND data->'events' = $4::jsonb AS same
-       FROM versions WHERE id = $1`,
-    [versionId, JSON.stringify(current.pros), JSON.stringify(current.event_types), JSON.stringify(current.events)]
+    "SELECT data->'events' = $2::jsonb AS same FROM versions WHERE id = $1",
+    [versionId, JSON.stringify(current.events)]
   );
   return rows[0]?.same === true;
 }
 
 async function list() {
   const { rows } = await pool.query(`
-    SELECT id, created_at, actor, description,
-           jsonb_array_length(data->'pros') AS pros,
-           jsonb_array_length(data->'event_types') AS event_types,
-           jsonb_array_length(data->'events') AS events
+    SELECT id, created_at, actor, description, jsonb_array_length(data->'events') AS events
       FROM versions ORDER BY id DESC
   `);
   return rows;
 }
 
-// Setzt Pros, Event-Typen und Events auf den Stand der Version zurück.
+// Setzt die Events auf den Stand der Version zurück. Pros und Event-Typen bleiben unverändert;
+// Events, deren Pro oder Typ es nicht mehr gibt, werden ausgelassen.
 async function restore(versionId, actor) {
   const db = await pool.connect();
   try {
@@ -82,24 +76,20 @@ async function restore(versionId, actor) {
       return null;
     }
     const { data } = rows[0];
-    const { rows: users } = await db.query("SELECT id FROM users");
-    const userIds = new Set(users.map((u) => u.id));
-    // Ersteller, deren Konto inzwischen gelöscht ist, werden leer gelassen.
-    const events = data.events.map((e) => ({ ...e, created_by: userIds.has(e.created_by) ? e.created_by : null }));
+    const ids = async (table) => new Set((await db.query(`SELECT id FROM ${table}`)).rows.map((r) => r.id));
+    const [userIds, proIds, typeIds] = [await ids("users"), await ids("pros"), await ids("event_types")];
+    const events = data.events
+      .filter((e) => proIds.has(e.pro_id) && typeIds.has(e.type_id))
+      // Ersteller, deren Konto inzwischen gelöscht ist, werden leer gelassen.
+      .map((e) => ({ ...e, created_by: userIds.has(e.created_by) ? e.created_by : null }));
+    const skipped = data.events.length - events.length;
 
+    // Die IDs stammen alle aus der Event-Sequenz, die Sequenz muss daher nicht angepasst werden.
     await db.query("DELETE FROM events");
-    await db.query("DELETE FROM event_types");
-    await db.query("DELETE FROM pros");
-    await db.query("INSERT INTO pros SELECT * FROM jsonb_populate_recordset(NULL::pros, $1)", [JSON.stringify(data.pros)]);
-    await db.query("INSERT INTO event_types SELECT * FROM jsonb_populate_recordset(NULL::event_types, $1)", [JSON.stringify(data.event_types)]);
     await db.query("INSERT INTO events SELECT * FROM jsonb_populate_recordset(NULL::events, $1)", [JSON.stringify(events)]);
-    for (const table of ["pros", "event_types", "events"]) {
-      await db.query(
-        `SELECT setval(pg_get_serial_sequence('${table}', 'id'), coalesce((SELECT max(id) FROM ${table}), 0) + 1, false)`
-      );
-    }
     const when = new Date(rows[0].created_at).toLocaleString("de-CH", { timeZone: "Europe/Zurich" });
-    const newId = await record(actor, `Version #${versionId} wiederhergestellt (Stand ${when})`, db);
+    const note = skipped ? `, ${skipped} Events ausgelassen (Pro oder Typ gelöscht)` : "";
+    const newId = await record(actor, `Version #${versionId} wiederhergestellt (Stand ${when}${note})`, db);
     await db.query("COMMIT");
     return newId;
   } catch (err) {

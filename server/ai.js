@@ -219,7 +219,12 @@ const AUTOFILL_TOOL = {
   },
 };
 
-const TOOLS = [...LEGACY_TOOLS.slice(0, 4), AUTOFILL_TOOL, ...LEGACY_TOOLS.slice(4)];
+const TOOLS = [
+  ...LEGACY_TOOLS.slice(0, 4),
+  AUTOFILL_TOOL,
+  LEGACY_TOOLS[4],
+  { ...LEGACY_TOOLS[5], description: "Setzt die Events (Zuweisungen) auf den Stand einer Version zurück; Pros und Typen bleiben (nur Admins)." },
+];
 
 const actor = (session) => `${session.name} (KI)`;
 const canRestore = (session) => ["admin", "api"].includes(session.role);

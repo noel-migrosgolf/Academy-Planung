@@ -133,7 +133,8 @@ async function savePro(res, run) {
   }
 }
 
-api.post("/pros", auth.requireDataAdmin, versioned((req, b) => `Pro «${b.pro.name}» angelegt`), (req, res) =>
+// Pros und Event-Typen werden manuell gepflegt und nicht im Verlauf gespeichert (nur die Events).
+api.post("/pros", auth.requireDataAdmin, (req, res) =>
   savePro(res, () => {
     const pro = prosData.normalize(req.body);
     const params = prosData.COLUMNS.map((_, i) => `$${i + 1}`).join(", ");
@@ -146,7 +147,7 @@ api.post("/pros", auth.requireDataAdmin, versioned((req, b) => `Pro «${b.pro.na
   })
 );
 
-api.put("/pros/:id", auth.requireDataAdmin, versioned((req, b) => `Pro «${b.pro.name}» geändert`), (req, res) =>
+api.put("/pros/:id", auth.requireDataAdmin, (req, res) =>
   savePro(res, () => {
     const pro = prosData.normalize(req.body);
     const sets = prosData.COLUMNS.map((c, i) => `${c} = $${i + 1}`).join(", ");
@@ -157,11 +158,16 @@ api.put("/pros/:id", auth.requireDataAdmin, versioned((req, b) => `Pro «${b.pro
   })
 );
 
-api.delete("/pros/:id", auth.requireDataAdmin, versioned((req, b) => `Pro «${b.pro?.name ?? "?"}» gelöscht`), async (req, res) => {
-  const { rows } = await pool.query("DELETE FROM pros WHERE id = $1 RETURNING id, name", [Number.parseInt(req.params.id, 10) || 0]);
-  if (!rows[0]) return res.status(404).json({ error: "Pro nicht gefunden." });
-  res.json({ ok: true, pro: rows[0] });
-});
+// Mit dem Pro werden auch seine Events gelöscht; nur dann entsteht eine Version.
+api.delete("/pros/:id", auth.requireDataAdmin,
+  versioned((req, b) => (b.events ? `Pro «${b.pro.name}» gelöscht, ${b.events} Events entfernt` : null)),
+  async (req, res) => {
+    const proId = Number.parseInt(req.params.id, 10) || 0;
+    const { rows: count } = await pool.query("SELECT count(*)::int AS n FROM events WHERE pro_id = $1", [proId]);
+    const { rows } = await pool.query("DELETE FROM pros WHERE id = $1 RETURNING id, name", [proId]);
+    if (!rows[0]) return res.status(404).json({ error: "Pro nicht gefunden." });
+    res.json({ ok: true, pro: rows[0], events: count[0].n });
+  });
 
 // --- Event-Typen (Vorlagen, nur Admins bearbeiten) ---
 
@@ -182,7 +188,7 @@ async function saveType(res, run) {
   }
 }
 
-api.post("/event-types", auth.requireDataAdmin, versioned((req, b) => `Event-Typ «${b.type.name}» angelegt`), (req, res) =>
+api.post("/event-types", auth.requireDataAdmin, (req, res) =>
   saveType(res, () => {
     const t = eventsData.normalizeType(req.body);
     const cols = eventsData.TYPE_COLUMNS;
@@ -195,7 +201,7 @@ api.post("/event-types", auth.requireDataAdmin, versioned((req, b) => `Event-Typ
   })
 );
 
-api.put("/event-types/:id", auth.requireDataAdmin, versioned((req, b) => `Event-Typ «${b.type.name}» geändert`), (req, res) =>
+api.put("/event-types/:id", auth.requireDataAdmin, (req, res) =>
   saveType(res, async () => {
     const t = eventsData.normalizeType(req.body);
     const cols = eventsData.TYPE_COLUMNS;
@@ -211,7 +217,7 @@ api.put("/event-types/:id", auth.requireDataAdmin, versioned((req, b) => `Event-
   })
 );
 
-api.delete("/event-types/:id", auth.requireDataAdmin, versioned((req, b) => `Event-Typ «${b.type?.name ?? "?"}» gelöscht`), async (req, res) => {
+api.delete("/event-types/:id", auth.requireDataAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query("DELETE FROM event_types WHERE id = $1 RETURNING id, name", [Number.parseInt(req.params.id, 10) || 0]);
     if (!rows[0]) return res.status(404).json({ error: "Event-Typ nicht gefunden." });
@@ -377,7 +383,7 @@ api.get("/export", limitExport, auth.requireAdminOrExportToken, async (req, res)
   });
 });
 
-// --- Versionsverlauf (Pros, Event-Typen, Events) ---
+// --- Versionsverlauf (nur Events) ---
 
 api.get("/versions", auth.requireDataAdmin, async (req, res) => {
   res.json({ versions: await history.list() });
