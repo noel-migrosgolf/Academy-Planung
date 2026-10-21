@@ -32,6 +32,13 @@
     return ((ev.end_min - ev.start_min) * per30) / 30;
   }
 
+  // Belegte Zeit: Bei pauschalen Typen ist der Pro für die ganzen Brutto-Stunden belegt,
+  // der Puffer hängt am Ende an (Platzreife: Kurs 10:00–12:30, 3 h brutto → bis 13:00).
+  function bookedEnd(t, start, end) {
+    if (t.calc !== "pauschal") return end;
+    return Math.min(24 * 60, Math.max(end, start + t.brutto_fix_min));
+  }
+
   // Ende des Unterrichts: Der Unterricht beginnt pünktlich, der ganze Puffer
   // liegt am Ende des Events.
   function lessonEnd(ev) {
@@ -190,7 +197,7 @@
     const fixed = t.fixed_start_min !== null;
     if (fixed) {
       f.start.value = clock(t.fixed_start_min);
-      f.end.value = clock(t.fixed_end_min);
+      f.end.value = clock(bookedEnd(t, t.fixed_start_min, t.fixed_end_min));
     }
     const locked = fixed || !!editingEvent?.series_id;
     f.start.disabled = locked;
@@ -384,7 +391,10 @@
       const dot = el("span", "gdot");
       dot.style.background = t.color;
       name.append(dot, document.createTextNode(t.name));
-      const time = t.fixed_start_min !== null ? `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}` : "frei wählbar";
+      const booked = t.fixed_start_min !== null ? bookedEnd(t, t.fixed_start_min, t.fixed_end_min) : null;
+      const time = t.fixed_start_min === null
+        ? "frei wählbar"
+        : `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}${booked > t.fixed_end_min ? `, Puffer bis ${clock(booked)}` : ""}`;
       const terms = isSeriesType(t) ? `${t.series_offsets.length} (${patternText(t)})` : t.first_weekday !== null ? `1 (${D.WEEKDAYS[t.first_weekday]})` : "1";
       tr.append(name, el("td", "muted", hoursText(t)), el("td", "tab", time), el("td", "", terms));
       const actions = el("td");

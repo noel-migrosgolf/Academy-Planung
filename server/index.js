@@ -196,14 +196,18 @@ api.post("/event-types", auth.requireAdmin, (req, res) =>
 );
 
 api.put("/event-types/:id", auth.requireAdmin, (req, res) =>
-  saveType(res, () => {
+  saveType(res, async () => {
     const t = eventsData.normalizeType(req.body);
     const cols = eventsData.TYPE_COLUMNS;
-    return pool.query(
+    const typeId = Number.parseInt(req.params.id, 10) || 0;
+    const result = await pool.query(
       `UPDATE event_types SET ${cols.map((c, i) => `${c} = $${i + 1}`).join(", ")}
         WHERE id = $${cols.length + 1} RETURNING ${TYPE_FIELDS}`,
-      [...eventsData.typeValues(t), Number.parseInt(req.params.id, 10) || 0]
+      [...eventsData.typeValues(t), typeId]
     );
+    // Bereits geplante Events übernehmen eine geänderte feste Zeit bzw. Brutto-Dauer.
+    if (result.rows[0]) await pool.query(eventsData.SYNC_FIXED_EVENTS_SQL, [typeId]);
+    return result;
   })
 );
 

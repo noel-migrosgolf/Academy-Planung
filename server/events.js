@@ -132,14 +132,35 @@ function id(value, label) {
   return int(value, label, 1, 2 ** 31 - 1);
 }
 
+// Belegte Zeit des Pros: Bei pauschalen Typen ist der Pro für die ganzen Brutto-Stunden
+// belegt. Liegt Brutto über der Kurszeit, hängt der Puffer am Ende an
+// (Platzreife: Kurs 10:00–12:30, 3 h brutto → belegt bis 13:00).
+function bookedEnd(type, start, end) {
+  if (type.calc !== "pauschal") return end;
+  return Math.min(24 * 60, Math.max(end, start + type.brutto_fix_min));
+}
+
 // Uhrzeit eines Termins: feste Zeit des Typs oder die Eingabe
 function times(type, body) {
-  if (type.fixed_start_min !== null) return { start_min: type.fixed_start_min, end_min: type.fixed_end_min };
+  if (type.fixed_start_min !== null) {
+    return { start_min: type.fixed_start_min, end_min: bookedEnd(type, type.fixed_start_min, type.fixed_end_min) };
+  }
   const start = minutes(body.start_min, "Beginn");
   const end = minutes(body.end_min, "Ende");
   if (end <= start) throw new ValidationError("Das Ende muss nach dem Beginn liegen.");
-  return { start_min: start, end_min: end };
+  return { start_min: start, end_min: bookedEnd(type, start, end) };
 }
+
+// Gleicht bestehende Events von Typen mit fester Zeit an die Typ-Einstellungen an
+// (z. B. nach einer Änderung der Zeit oder der Brutto-Stunden). $1 = Typ-ID oder NULL für alle.
+const SYNC_FIXED_EVENTS_SQL = `
+  UPDATE events e
+     SET start_min = t.fixed_start_min,
+         end_min = CASE WHEN t.calc = 'pauschal'
+                        THEN LEAST(1440, GREATEST(t.fixed_end_min, t.fixed_start_min + t.brutto_fix_min))
+                        ELSE t.fixed_end_min END
+    FROM event_types t
+   WHERE e.type_id = t.id AND t.fixed_start_min IS NOT NULL AND ($1::int IS NULL OR t.id = $1)`;
 
 // Neues Event bzw. neue Serie: berechnet alle Termine aus Typ und Eingabe.
 // body.pros (optional) wählt pro Termin einen eigenen Pro, sonst gilt body.pro_id.
@@ -186,5 +207,5 @@ function planUpdate(existing, type, body) {
 
 module.exports = {
   SEED_TYPES, SEED_SERIES_TYPES, TYPE_COLUMNS, WEEKDAYS, ValidationError,
-  normalizeType, typeValues, planNew, planUpdate, id,
+  normalizeType, typeValues, planNew, planUpdate, id, SYNC_FIXED_EVENTS_SQL,
 };

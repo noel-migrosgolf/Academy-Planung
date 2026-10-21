@@ -130,6 +130,9 @@ async function migrate() {
     for (const seed of events.SEED_SERIES_TYPES) await insertType(seed);
   }
 
+  // Events mit fester Zeit an ihren Typ angleichen (Puffer am Ende bei pauschalen Typen).
+  await pool.query(events.SYNC_FIXED_EVENTS_SQL, [null]);
+
   await pool.query("DELETE FROM sessions WHERE expires_at < now()");
 
   // Start-Pros nur beim erstmaligen Anlegen der Tabelle einfügen.
