@@ -18,6 +18,7 @@
     history: $("#page-history"),
     ki: $("#page-ki"),
     auslasten: $("#page-auslasten"),
+    regeln: $("#page-regeln"),
   };
 
   let session = null;
@@ -40,6 +41,11 @@
     api,
     toast,
     reload: () => loadData(),
+  });
+  RulesPage.init({
+    api,
+    toast,
+    isAdmin: () => session?.role === "admin",
   });
   AutoFillPage.init({
     api,
@@ -126,6 +132,7 @@
     if (name === "history") HistoryPage.load();
     if (name === "ki") KiPage.show();
     if (name === "auslasten") AutoFillPage.render();
+    if (name === "regeln") RulesPage.show();
   }
 
   function render() {
@@ -167,6 +174,7 @@
     Events.setData(data);
     Planner.setData(data);
     AutoFillPage.setData(data);
+    RulesPage.setData(data);
     if (currentPage === "pros") renderPros();
   }
 

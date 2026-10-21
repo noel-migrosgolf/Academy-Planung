@@ -60,6 +60,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/><path d="M4 18h16"/></svg>
         Auslasten
       </button>
+      <button data-page="regeln">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></svg>
+        Regeln
+      </button>
       <button data-page="pros">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7.5" r="3.5"/><path d="M5 20c.9-3.6 3.7-6 7-6s6.1 2.4 7 6"/></svg>
         Pros
@@ -293,6 +297,7 @@
           <div class="bd af-opts">
             <div class="chips" id="af-types"></div>
             <div class="af-row">
+              <label class="check sm"><input type="checkbox" id="af-rules" checked> Regeln zuerst erfüllen</label>
               <label class="check sm"><input type="checkbox" id="af-free" checked> Freie Tage der Pros beachten</label>
               <label class="af-date">Von <input type="date" id="af-from" value="2027-01-01" min="2027-01-01" max="2027-12-31"></label>
               <label class="af-date">Bis <input type="date" id="af-to" value="2027-12-31" min="2027-01-01" max="2027-12-31"></label>
@@ -312,10 +317,48 @@
             </table>
           </div>
         </div>
+        <div id="af-rule-results" class="rule-list af-rule-results" hidden></div>
         <div class="actions">
           <span class="note" id="af-note"></span>
           <button class="btn" type="button" id="af-preview">Vorschau</button>
           <button class="btn primary" type="button" id="af-run">Ausführen</button>
+        </div>
+      </section>
+
+      <!-- Regeln -->
+      <section id="page-regeln" class="page" hidden>
+        <h1>Regeln</h1>
+        <p class="lead">Regeln legen fest, wie viele Sollstunden (brutto, über alle Pros zusammen) eines Kurses in einem Zeitraum stattfinden müssen. «Genau» und «höchstens» sperren das Einplanen darüber hinaus; fehlende Stunden füllt der Reiter «Auslasten» auf.</p>
+        <div class="card stack" id="rule-form-card" hidden>
+          <div class="hd"><h3 id="rule-form-title">Neue Regel</h3></div>
+          <form class="bd rule-form" id="rule-form" novalidate>
+            <div class="rule-sentence">
+              <span>Zwischen</span>
+              <input type="date" name="von" value="2027-01-01" min="2027-01-01" max="2027-12-31">
+              <span>und</span>
+              <input type="date" name="bis" value="2027-12-31" min="2027-01-01" max="2027-12-31">
+              <span>müssen</span>
+              <select name="operator" class="fsel">
+                <option value="min">mindestens</option>
+                <option value="eq">genau</option>
+                <option value="gt">mehr als</option>
+                <option value="max">höchstens</option>
+              </select>
+              <input type="number" name="stunden" min="0" step="0.5" placeholder="z. B. 30" class="rule-num">
+              <span>Sollstunden von</span>
+              <select name="type_id" class="fsel"></select>
+              <span>stattfinden.</span>
+            </div>
+            <p class="form-error" role="alert"></p>
+            <div class="actions">
+              <button class="btn" type="button" id="rule-cancel" hidden>Abbrechen</button>
+              <button class="btn primary" type="submit" id="rule-submit">Regel anlegen</button>
+            </div>
+          </form>
+        </div>
+        <div class="card stack">
+          <div class="hd"><h3>Regeln</h3><span class="sub" id="rule-count"></span></div>
+          <div id="rule-list" class="rule-list"></div>
         </div>
       </section>
 
@@ -645,6 +688,7 @@
   <script src="js/history.js"></script>
   <script src="js/ai.js"></script>
   <script src="js/autofill.js"></script>
+  <script src="js/rules.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

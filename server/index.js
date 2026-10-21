@@ -4,6 +4,7 @@ const { pool, migrate } = require("./db");
 const auth = require("./auth");
 const prosData = require("./pros");
 const eventsData = require("./events");
+const rulesData = require("./rules");
 const history = require("./history");
 const planning = require("./planning");
 const ai = require("./ai");
@@ -272,6 +273,7 @@ api.post("/events", auth.requireLogin, versioned(async (req, b) => `Geplant: ${a
     const planned = eventsData.planNew(type, req.body);
     await planning.assertArea(db, type, planned.map((ev) => ev.pro_id));
     await planning.assertCapacity(db, type, planned.reduce((sum, ev) => sum + planning.minutesOf(ev, type, "brutto"), 0));
+    await planning.assertRules(db, type, planned);
     const created = [];
     for (const ev of planned) {
       await assertFree(db, ev, 0, planned.length > 1 ? `Termin ${ev.series_index}: ` : "");
@@ -297,6 +299,7 @@ api.put("/events/:id", auth.requireLogin, versioned(async (req, b) => `Geändert
     await planning.assertArea(db, type, [ev.pro_id]);
     const before = type.id === rows[0].type_id ? planning.minutesOf(rows[0], type, "brutto") : 0;
     await planning.assertCapacity(db, type, planning.minutesOf(ev, type, "brutto") - before);
+    await planning.assertRules(db, type, [ev], type.id === rows[0].type_id ? [rows[0]] : []);
     await assertFree(db, ev, eventId, "");
     const { rows: updated } = await db.query(
       `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
@@ -372,6 +375,50 @@ api.post("/events/bulk-delete", ...bulkRoute(
   (b) => `Sammellöschung: ${b.deleted.length} Termine`
 ));
 
+// --- Regeln (Reiter «Regeln», server/rules.js); nur Admins bearbeiten, nicht im Verlauf ---
+
+api.get("/rules", auth.requireLogin, async (req, res) => {
+  res.json({ rules: await planning.ruleStatus() });
+});
+
+async function saveRule(res, run) {
+  try {
+    const { rows } = await run();
+    if (!rows[0]) return res.status(404).json({ error: "Regel nicht gefunden." });
+    res.json({ rule: rows[0] });
+  } catch (err) {
+    if (err instanceof eventsData.ValidationError) return res.status(400).json({ error: err.message });
+    if (err.code === "23503") return res.status(400).json({ error: "Diesen Kurs gibt es nicht." });
+    throw err;
+  }
+}
+
+api.post("/rules", auth.requireDataAdmin, (req, res) =>
+  saveRule(res, () => {
+    const r = rulesData.normalize(req.body);
+    return pool.query(
+      `INSERT INTO rules (${rulesData.COLUMNS.join(", ")}) VALUES (${rulesData.COLUMNS.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING id`,
+      rulesData.values(r)
+    );
+  })
+);
+
+api.put("/rules/:id", auth.requireDataAdmin, (req, res) =>
+  saveRule(res, () => {
+    const r = rulesData.normalize(req.body);
+    const sets = rulesData.COLUMNS.map((c, i) => `${c} = $${i + 1}`).join(", ");
+    return pool.query(`UPDATE rules SET ${sets} WHERE id = $${rulesData.COLUMNS.length + 1} RETURNING id`, [
+      ...rulesData.values(r),
+      Number.parseInt(req.params.id, 10) || 0,
+    ]);
+  })
+);
+
+api.delete("/rules/:id", auth.requireDataAdmin, async (req, res) => {
+  await pool.query("DELETE FROM rules WHERE id = $1", [Number.parseInt(req.params.id, 10) || 0]);
+  res.json({ ok: true });
+});
+
 // --- Auslasten: Kurse automatisch verteilen, Ziel je Pro (Reiter «Auslasten») ---
 
 // { ziele: [{ pro, prozent }], typen?, von?, bis?, freie_tage_beachten?, dry_run? }
@@ -391,6 +438,7 @@ api.post("/autofill", auth.requireLogin,
         dryRun,
         count: r.created.length,
         summary: r.summary,
+        regeln: r.regeln,
         created: dryRun ? [] : r.created.map((e) => e.id),
       });
     } catch (err) {

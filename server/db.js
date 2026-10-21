@@ -147,6 +147,21 @@ async function migrate() {
     for (const seed of events.SEED_SERIES_TYPES) await insertType(seed);
   }
 
+  // Planungsregeln (Reiter «Regeln»), siehe server/rules.js
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rules (
+      id         SERIAL PRIMARY KEY,
+      type_id    INTEGER NOT NULL REFERENCES event_types(id) ON DELETE CASCADE,
+      von        DATE NOT NULL,
+      bis        DATE NOT NULL,
+      operator   TEXT NOT NULL,
+      stunden    REAL NOT NULL,
+      aktiv      BOOLEAN NOT NULL DEFAULT true,
+      notiz      TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+
   // Events mit fester Zeit an ihren Typ angleichen (Puffer am Ende bei pauschalen Typen).
   await pool.query(events.SYNC_FIXED_EVENTS_SQL, [null]);
 

@@ -103,6 +103,7 @@
         von: $("#af-from").value || "2027-01-01",
         bis: $("#af-to").value || "2027-12-31",
         freie_tage_beachten: $("#af-free").checked,
+        regeln_erfuellen: $("#af-rules").checked,
         dry_run: dryRun,
       },
     });
@@ -116,6 +117,7 @@
     try {
       const r = await request(dryRun);
       results = new Map(r.summary.map((s) => [s.pro, s]));
+      renderRuleResults(r.regeln || []);
       $("#af-note").textContent = dryRun
         ? `Vorschau: ${r.count} Termine würden geplant (noch nichts gespeichert).`
         : `${r.count} Termine geplant.`;
@@ -132,10 +134,28 @@
     }
   }
 
+  // Stand der Regeln nach Vorschau bzw. Ausführen
+  function renderRuleResults(list) {
+    const box = $("#af-rule-results");
+    box.replaceChildren();
+    box.hidden = !list.length;
+    if (!list.length) return;
+    box.append(el("h4", "", "Regeln"));
+    for (const g of list) {
+      const row = el("div", `rule-row ${g.erfuellt ? "ok" : "bad"}`);
+      row.append(el("span", "rule-ic", g.erfuellt ? "✓" : "✗"));
+      const main = el("div", "rule-main");
+      main.append(el("div", "rule-text", g.regel), el("div", "rule-meter tab", `${g.vorher_stunden} h → ${g.nachher_stunden} h`));
+      row.append(main);
+      box.append(row);
+    }
+  }
+
   async function undo(ids) {
     try {
       await ctx.api("/events/bulk-delete", { method: "POST", body: { ids } });
       results = new Map();
+      renderRuleResults([]);
       $("#af-note").textContent = "Auslasten rückgängig gemacht.";
       ctx.toast("Auslasten rückgängig gemacht");
       await ctx.reload();
@@ -160,7 +180,7 @@
     });
     $("#af-preview").addEventListener("click", () => run(true));
     $("#af-run").addEventListener("click", () => run(false));
-    ["#af-free", "#af-from", "#af-to"].forEach((s) => $(s).addEventListener("change", () => {
+    ["#af-free", "#af-rules", "#af-from", "#af-to"].forEach((s) => $(s).addEventListener("change", () => {
       results = new Map();
       renderPros();
     }));

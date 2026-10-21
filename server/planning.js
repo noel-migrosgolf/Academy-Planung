@@ -4,6 +4,7 @@
 
 const { pool } = require("./db");
 const eventsData = require("./events");
+const rulesData = require("./rules");
 
 const TYPE_FIELDS = `id, ${eventsData.TYPE_COLUMNS.join(", ")}`;
 const EVENT_FIELDS =
@@ -146,7 +147,9 @@ async function overview({ from, to, pro } = {}, db = pool) {
     (ev) => (!from || ev.date >= from) && (!to || ev.date <= to) && (!proFilter || ev.pro_id === proFilter.id)
   );
 
+  const regeln = (await ruleStatus(db)).filter((r) => r.aktiv);
   return {
+    regeln: regeln.map((r) => ({ regel: r.text, ist_stunden: r.ist_stunden, erfuellt: r.erfuellt })),
     pros: lk.pros.map((p) => {
       const sum = planned.get(p.id) || { brutto: 0, netto: 0 };
       return {
@@ -192,8 +195,12 @@ async function overview({ from, to, pro } = {}, db = pool) {
 }
 
 // Kompakte Textform der Übersicht (spart Tokens gegenüber JSON)
-function overviewText(o, { maxEvents = 400, parts = ["pros", "typen", "events"] } = {}) {
+function overviewText(o, { maxEvents = 400, parts = ["regeln", "pros", "typen", "events"] } = {}) {
   const lines = [];
+  if (parts.includes("regeln") && o.regeln.length) {
+    lines.push("REGELN (Regel|ist h|erfüllt)");
+    for (const r of o.regeln) lines.push([r.regel, r.ist_stunden, r.erfuellt ? "ja" : "nein"].join("|"));
+  }
   if (parts.includes("pros")) {
     lines.push("PROS (Name|Kürzel|Soll h|geplant brutto h|netto h|Auslastung %|frei|Einsatz)");
     for (const p of o.pros) {
@@ -278,6 +285,7 @@ async function bulkCreate(items, { dryRun = false, userId = null } = {}) {
       });
       await assertArea(db, type, planned.map((ev) => ev.pro_id), label);
       await assertCapacity(db, type, sumBrutto(planned, type), label);
+      await assertRules(db, type, planned, [], label);
       for (const ev of planned) {
         await assertFree(db, ev, 0, `${label}${planned.length > 1 ? `Termin ${ev.series_index}: ` : ""}`);
         const { rows } = await db.query(
@@ -338,6 +346,7 @@ async function bulkUpdate(changes, { dryRun = false } = {}) {
       await assertArea(db, type, [ev.pro_id], label);
       const before = type.id === current.type_id ? minutesOf(current, type, "brutto") : 0;
       await assertCapacity(db, type, minutesOf(ev, type, "brutto") - before, label);
+      await assertRules(db, type, [ev], type.id === current.type_id ? [current] : [], label);
       await assertFree(db, ev, id, label);
       const { rows: done } = await db.query(
         `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
@@ -366,8 +375,71 @@ const WEEKDAY_INDEX = Object.fromEntries(eventsData.WEEKDAYS.map((d, i) => [d.to
 // gezählt wie in der Übersicht über alle Events) erreicht ist. Die Serien werden gleichmässig über den
 // Zeitraum verteilt; es gelten nur die Regeln des Tools (keine Überschneidung, Wochentag, feste Zeit),
 // auf Wunsch zusätzlich die freien Wochentage der Pros. Ganz oder gar nicht, eine Transaktion.
+// --- Regeln (server/rules.js) ---
+
+async function loadRules(db, { activeOnly = true } = {}) {
+  const { rows } = await db.query(
+    `SELECT r.id, r.type_id, to_char(r.von, 'YYYY-MM-DD') AS von, to_char(r.bis, 'YYYY-MM-DD') AS bis,
+            r.operator, r.stunden, r.aktiv, r.notiz
+       FROM rules r ${activeOnly ? "WHERE r.aktiv" : ""} ORDER BY r.von, r.id`
+  );
+  return rows;
+}
+
+// Brutto-Minuten eines Typs im Zeitraum der Regel (jeder Termin zählt mit seinem Datum)
+async function ruleMinutes(db, rule, type) {
+  const { rows } = await db.query(
+    "SELECT start_min, end_min FROM events WHERE type_id = $1 AND date BETWEEN $2 AND $3",
+    [rule.type_id, rule.von, rule.bis]
+  );
+  return rows.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
+}
+
+// Alle Regeln mit aktuellem Stand (für den Reiter «Regeln» und die KI)
+async function ruleStatus(db = pool) {
+  const lk = await lookups(db);
+  const typeById = new Map(lk.types.map((t) => [t.id, t]));
+  const list = [];
+  for (const rule of await loadRules(db, { activeOnly: false })) {
+    const type = typeById.get(rule.type_id);
+    const ist = Math.round(((await ruleMinutes(db, rule, type)) / 60) * 100) / 100;
+    list.push({
+      ...rule,
+      typ: type.name,
+      typ_code: type.code,
+      text: rulesData.describe(rule, type.name),
+      ist_stunden: ist,
+      erfuellt: rulesData.OPS[rule.operator].ok(ist, rule.stunden),
+    });
+  }
+  return list;
+}
+
+// Obergrenzen (genau, höchstens) dürfen durch neue Termine nicht überschritten werden.
+// added/removed: Events mit date, start_min, end_min (bei Änderungen der alte Stand in removed).
+async function assertRules(db, type, added, removed = [], label = "") {
+  const rules = (await loadRules(db)).filter((r) => r.type_id === type.id && rulesData.OPS[r.operator].upper);
+  for (const rule of rules) {
+    const inWindow = (list) => list.filter((ev) => ev.date >= rule.von && ev.date <= rule.bis)
+      .reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
+    const delta = inWindow(added) - inWindow(removed);
+    if (delta <= 0) continue;
+    const now = await ruleMinutes(db, rule, type);
+    if ((now + delta) / 60 > rule.stunden + rulesData.EPS) {
+      throw new eventsData.ValidationError(
+        `${label}Regel verletzt: «${rulesData.describe(rule, type.name)}» – bereits ${hoursText(now)} geplant, dazu kämen ${hoursText(delta)}.`
+      );
+    }
+  }
+}
+
 // ziele: [{ pro, prozent }] = eigenes Ziel je Pro (statt ziel_prozent für alle bzw. die Liste pros).
-async function autoFill({ pros, ziel_prozent, ziele, typen, von, bis, freie_tage_beachten = false } = {}, { dryRun = false, userId = null } = {}) {
+// regeln_erfuellen: zuerst die Untergrenzen der aktiven Regeln (mindestens, genau, mehr als) auffüllen,
+// verteilt auf passende Pros mit der geringsten Auslastung im Verhältnis zu ihrem Ziel.
+async function autoFill(
+  { pros, ziel_prozent, ziele, typen, von, bis, freie_tage_beachten = false, regeln_erfuellen = false } = {},
+  { dryRun = false, userId = null } = {}
+) {
   const checkPercent = (v) => {
     const n = Number(v);
     if (!(n >= 0 && n <= 200)) throw new PlanningError("Ziel-Auslastung: bitte eine Zahl zwischen 0 und 200 (%).");
@@ -381,6 +453,7 @@ async function autoFill({ pros, ziel_prozent, ziele, typen, von, bis, freie_tage
 
   return transaction(dryRun, "created", async (db) => {
     const lk = await lookups(db);
+    const typeById = new Map(lk.types.map((t) => [t.id, t]));
     const requirePro = (p) => findPro(lk, p) || (() => { throw new PlanningError(`Pro «${p}» nicht gefunden.`); })();
     const targets = ziele?.length
       ? ziele.map((z) => ({ pro: requirePro(z.pro), percent: checkPercent(z.prozent) }))
@@ -392,84 +465,161 @@ async function autoFill({ pros, ziel_prozent, ziele, typen, von, bis, freie_tage
     for (const t of types) {
       if (t.fixed_start_min === null) throw new PlanningError(`«${t.name}» hat keine feste Zeit und lässt sich nicht automatisch verteilen.`);
     }
-    if (!types.length) throw new PlanningError("Keine Event-Typen mit fester Zeit vorhanden.");
+    if (!types.length && !regeln_erfuellen) throw new PlanningError("Keine Event-Typen mit fester Zeit vorhanden.");
 
-    // Mögliche Starttage je Typ im Zeitraum (ganze Serie muss hineinpassen)
-    const candidates = [];
-    // Einplanbarer Zeitraum des Typs schränkt zusätzlich ein; bereits geplante Durchführungen zählen zur Höchstzahl.
-    const used = new Map(); // Brutto-Minuten je Typ mit Höchstwert
-    for (const t of types) {
+    // Mögliche Starttage eines Typs (ganze Serie im Zeitraum und im einplanbaren Zeitraum des Typs),
+    // in einer Reihenfolge, die den Zeitraum gleichmässig abdeckt.
+    function candidatesFor(t, rangeFrom, rangeTo) {
       const last = t.series_offsets[t.series_offsets.length - 1];
-      const start = t.einplanbar_von && t.einplanbar_von > from ? t.einplanbar_von : from;
-      const end = t.einplanbar_bis && t.einplanbar_bis < to ? t.einplanbar_bis : to;
+      const start = t.einplanbar_von && t.einplanbar_von > rangeFrom ? t.einplanbar_von : rangeFrom;
+      const end = t.einplanbar_bis && t.einplanbar_bis < rangeTo ? t.einplanbar_bis : rangeTo;
+      const list = [];
       for (let d = start; d <= end; d = eventsData.addDays(d, 1)) {
         if (t.first_weekday !== null && eventsData.weekdayOf(d) !== t.first_weekday) continue;
         if (eventsData.addDays(d, last) > end) break;
-        candidates.push({ type: t, date: d });
+        list.push({ type: t, date: d });
       }
-      if (t.max_stunden) used.set(t.id, await usedMinutes(db, t));
+      return list;
     }
-    candidates.sort((a, b) => a.date.localeCompare(b.date) || a.type.id - b.type.id);
-    const order = spreadOrder(candidates.length);
+    const spread = (list) => spreadOrder(list.length).map((i) => list[i]);
 
-    // Bestehende Belegung und geplante Stunden
+    // Bestehende Belegung, geplante Stunden je Pro, verbrauchte Stunden je Typ und je Regel
     const { rows: existing } = await db.query(`SELECT ${EVENT_FIELDS} FROM events`);
-    const typeById = new Map(lk.types.map((t) => [t.id, t]));
     const busy = new Map(); // "pro|datum" → [[Beginn, Ende]]
     const planned = new Map();
+    const typeUsed = new Map();
     const book = (ev) => {
       const key = `${ev.pro_id}|${ev.date}`;
       busy.set(key, [...(busy.get(key) || []), [ev.start_min, ev.end_min]]);
     };
     for (const ev of existing) {
+      const minutes = minutesOf(ev, typeById.get(ev.type_id), "brutto");
       book(ev);
-      planned.set(ev.pro_id, (planned.get(ev.pro_id) || 0) + minutesOf(ev, typeById.get(ev.type_id), "brutto"));
+      planned.set(ev.pro_id, (planned.get(ev.pro_id) || 0) + minutes);
+      typeUsed.set(ev.type_id, (typeUsed.get(ev.type_id) || 0) + minutes);
     }
+    const rules = (await loadRules(db)).map((r) => ({ ...r, type: typeById.get(r.type_id) }));
+    const ruleUsed = new Map();
+    const inRule = (rule, ev) => ev.type_id === rule.type_id && ev.date >= rule.von && ev.date <= rule.bis;
+    for (const rule of rules) {
+      ruleUsed.set(rule.id, existing.filter((ev) => inRule(rule, ev)).reduce((s, ev) => s + minutesOf(ev, rule.type, "brutto"), 0));
+    }
+    const rulesBefore = new Map(ruleUsed);
+
+    const freeDaysOf = (pro) => freie_tage_beachten
+      ? new Set((pro.freie_tage || []).map((d) => WEEKDAY_INDEX[String(d).toLowerCase()]))
+      : new Set();
     const free = (ev) => !(busy.get(`${ev.pro_id}|${ev.date}`) || []).some(([s, e]) => ev.start_min < e && ev.end_min > s);
+    const seriesMinutes = (type, series) => series.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
+
+    // Darf diese Serie so eingeplant werden? (Einsatzbereich, frei, freie Tage, Typ-Maximum, Regel-Obergrenzen)
+    function fits(type, series, pro) {
+      if (!areaAllows(type, pro)) return false;
+      const freeDays = freeDaysOf(pro);
+      if (series.some((ev) => freeDays.has(eventsData.weekdayOf(ev.date)) || !free(ev))) return false;
+      if (type.max_stunden && (typeUsed.get(type.id) || 0) + seriesMinutes(type, series) > type.max_stunden * 60 + 0.01) return false;
+      for (const rule of rules) {
+        if (!rulesData.OPS[rule.operator].upper) continue;
+        const add = series.filter((ev) => inRule(rule, ev)).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
+        if (add && (ruleUsed.get(rule.id) + add) / 60 > rule.stunden + rulesData.EPS) return false;
+      }
+      return true;
+    }
 
     const toInsert = [];
+    const perPro = new Map(); // Pro-ID → Map(Typ → Anzahl Serien)
+    function commit(type, series, pro) {
+      const minutes = seriesMinutes(type, series);
+      for (const ev of series) {
+        book(ev);
+        toInsert.push(ev);
+        for (const rule of rules) {
+          if (inRule(rule, ev)) ruleUsed.set(rule.id, ruleUsed.get(rule.id) + minutesOf(ev, type, "brutto"));
+        }
+      }
+      planned.set(pro.id, (planned.get(pro.id) || 0) + minutes);
+      typeUsed.set(type.id, (typeUsed.get(type.id) || 0) + minutes);
+      const counts = perPro.get(pro.id) || new Map();
+      counts.set(type.code || type.name, (counts.get(type.code || type.name) || 0) + 1);
+      perPro.set(pro.id, counts);
+    }
+
+    const goalOf = new Map(targets.map(({ pro, percent }) => [pro.id, (pro.sollstunden * 60 * percent) / 100]));
+    const before = new Map(lk.pros.map((p) => [p.id, planned.get(p.id) || 0]));
+
+    // 1) Regeln erfüllen (Untergrenzen)
+    if (regeln_erfuellen) {
+      for (const rule of rules) {
+        const op = rule.operator;
+        if (op === "max" || rule.type.fixed_start_min === null) continue;
+        const target = rule.stunden * 60;
+        // erreicht: «mehr als» erst über dem Wert, «mindestens»/«genau» ab dem Wert
+        const done = () => {
+          const h = ruleUsed.get(rule.id) / 60;
+          return op === "gt" ? h > rule.stunden + rulesData.EPS : h >= rule.stunden - rulesData.EPS;
+        };
+        const rangeFrom = rule.von > from ? rule.von : from;
+        const rangeTo = rule.bis < to ? rule.bis : to;
+        for (const { type, date } of spread(candidatesFor(rule.type, rangeFrom, rangeTo))) {
+          if (done()) break;
+          const minutes = seriesMinutes(type, eventsData.planNew(type, { pro_id: 1, date })); // unabhängig vom Pro
+          if (op === "eq" && ruleUsed.get(rule.id) + minutes > target + 0.6) continue; // «genau» nicht überschreiten
+          // Pros mit der geringsten Auslastung im Verhältnis zu ihrem Ziel zuerst
+          const ranked = lk.pros
+            .filter((p) => p.sollstunden > 0)
+            .sort((a, b) => (planned.get(a.id) || 0) / (goalOf.get(a.id) || a.sollstunden * 60 || 1)
+              - (planned.get(b.id) || 0) / (goalOf.get(b.id) || b.sollstunden * 60 || 1));
+          for (const pro of ranked) {
+            const series = eventsData.planNew(type, { pro_id: pro.id, date });
+            if (!fits(type, series, pro)) continue;
+            commit(type, series, pro);
+            break;
+          }
+        }
+      }
+    }
+
+    // 2) Ziel-Auslastung je Pro auffüllen
+    const candidates = types.flatMap((t) => candidatesFor(t, from, to))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.type.id - b.type.id);
+    const ordered = spread(candidates);
     const summary = [];
-    for (const { pro, percent: goalPercent } of targets) {
-      const before = planned.get(pro.id) || 0;
+    for (const { pro } of targets) {
       if (!pro.sollstunden) {
         summary.push({ pro: pro.name, hinweis: "keine Sollstunden" });
         continue;
       }
-      const goal = (pro.sollstunden * 60 * goalPercent) / 100;
-      const freeDays = freie_tage_beachten ? new Set((pro.freie_tage || []).map((d) => WEEKDAY_INDEX[String(d).toLowerCase()])) : new Set();
-      let have = before;
-      const perType = new Map();
-      if (!types.some((t) => areaAllows(t, pro))) {
-        summary.push({ pro: pro.name, hinweis: "keine passenden Typen für den Einsatzbereich" });
-        continue;
-      }
-      for (const idx of order) {
+      const goal = goalOf.get(pro.id);
+      const hasTypes = types.some((t) => areaAllows(t, pro));
+      for (const { type, date } of hasTypes ? ordered : []) {
+        const have = planned.get(pro.id) || 0;
         if (have >= goal) break;
-        const { type, date } = candidates[idx];
-        if (!areaAllows(type, pro)) continue;
-
         const series = eventsData.planNew(type, { pro_id: pro.id, date });
-        const minutes = series.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
+        const minutes = seriesMinutes(type, series);
         if (have + minutes > goal + minutes / 2) continue; // nicht deutlich übers Ziel
-        if (type.max_stunden && used.get(type.id) + minutes > type.max_stunden * 60 + 0.01) continue;
-        if (series.some((ev) => freeDays.has(eventsData.weekdayOf(ev.date)) || !free(ev))) continue;
-        for (const ev of series) {
-          book(ev);
-          toInsert.push(ev);
-        }
-        have += minutes;
-        if (type.max_stunden) used.set(type.id, used.get(type.id) + minutes);
-        perType.set(type.code || type.name, (perType.get(type.code || type.name) || 0) + 1);
+        if (!fits(type, series, pro)) continue;
+        commit(type, series, pro);
       }
-      planned.set(pro.id, have);
+      const have = planned.get(pro.id) || 0;
       summary.push({
         pro: pro.name,
-        vorher_prozent: Math.round((before / 60 / pro.sollstunden) * 1000) / 10,
+        vorher_prozent: Math.round((before.get(pro.id) / 60 / pro.sollstunden) * 1000) / 10,
         nachher_prozent: Math.round((have / 60 / pro.sollstunden) * 1000) / 10,
-        serien: Object.fromEntries(perType),
-        ...(have < goal * 0.95 ? { hinweis: "Ziel nicht erreicht (zu wenig freie Termine)" } : {}),
+        serien: Object.fromEntries(perPro.get(pro.id) || []),
+        ...(!hasTypes && !perPro.has(pro.id) ? { hinweis: "keine passenden Typen für den Einsatzbereich" }
+          : have < goal * 0.95 ? { hinweis: "Ziel nicht erreicht (zu wenig freie Termine)" } : {}),
       });
     }
+
+    const regeln = rules.map((rule) => {
+      const ist = Math.round((ruleUsed.get(rule.id) / 60) * 100) / 100;
+      return {
+        regel: rulesData.describe(rule, rule.type.name),
+        vorher_stunden: Math.round((rulesBefore.get(rule.id) / 60) * 100) / 100,
+        nachher_stunden: ist,
+        erfuellt: rulesData.OPS[rule.operator].ok(ist, rule.stunden),
+      };
+    });
 
     let created = [];
     if (toInsert.length) {
@@ -482,7 +632,7 @@ async function autoFill({ pros, ziel_prozent, ziele, typen, von, bis, freie_tage
           col("series_id"), col("series_index"), toInsert.map(() => userId)]
       ));
     }
-    return { created, errors: [], dryRun, summary };
+    return { created, errors: [], dryRun, summary, regeln };
   });
 }
 
@@ -555,6 +705,6 @@ async function describeEvents(list) {
 
 module.exports = {
   TYPE_FIELDS, EVENT_FIELDS, PlanningError,
-  loadType, assertFree, assertArea, assertCapacity, formatDate, clock, timeArg, minutesOf,
+  loadType, assertFree, assertArea, assertCapacity, assertRules, ruleStatus, formatDate, clock, timeArg, minutesOf,
   overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, autoFill, undoChange, describeEvents,
 };
