@@ -38,7 +38,7 @@ api.post("/login", limitLogin, async (req, res) => {
     return res.status(401).json({ error: "Passwort falsch." });
   }
   await auth.createSession(res, { userId: user.id, role: "user" });
-  res.json({ user: { role: "user", id: user.id, name: user.name, username: user.username } });
+  res.json({ user: { role: user.is_admin ? "admin" : "user", id: user.id, name: user.name, username: user.username } });
 });
 
 api.post("/admin/login", limitLogin, async (req, res) => {
@@ -59,7 +59,7 @@ api.post("/logout", async (req, res) => {
 
 api.get("/users", auth.requireAdmin, async (req, res) => {
   const { rows } = await pool.query(
-    "SELECT id, name, username, created_at FROM users ORDER BY name"
+    "SELECT id, name, username, is_admin, created_at FROM users ORDER BY name"
   );
   res.json({ users: rows });
 });
@@ -76,9 +76,9 @@ api.post("/users", auth.requireAdmin, async (req, res) => {
   }
   try {
     const { rows } = await pool.query(
-      `INSERT INTO users (name, username, password_hash) VALUES ($1, $2, $3)
-       RETURNING id, name, username, created_at`,
-      [name, username, await auth.hashPassword(password)]
+      `INSERT INTO users (name, username, password_hash, is_admin) VALUES ($1, $2, $3, $4)
+       RETURNING id, name, username, is_admin, created_at`,
+      [name, username, await auth.hashPassword(password), req.body.is_admin === true]
     );
     res.status(201).json({ user: rows[0] });
   } catch (err) {
@@ -87,6 +87,18 @@ api.post("/users", auth.requireAdmin, async (req, res) => {
     }
     throw err;
   }
+});
+
+api.patch("/users/:id", auth.requireAdmin, async (req, res) => {
+  if (typeof req.body.is_admin !== "boolean") {
+    return res.status(400).json({ error: "Ungültige Angabe für Admin-Rechte." });
+  }
+  const { rows } = await pool.query(
+    "UPDATE users SET is_admin = $1 WHERE id = $2 RETURNING id, name, username, is_admin, created_at",
+    [req.body.is_admin, Number.parseInt(req.params.id, 10) || 0]
+  );
+  if (!rows[0]) return res.status(404).json({ error: "Benutzer nicht gefunden." });
+  res.json({ user: rows[0] });
 });
 
 api.delete("/users/:id", auth.requireAdmin, async (req, res) => {

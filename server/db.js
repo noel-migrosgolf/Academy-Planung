@@ -39,6 +39,7 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false");
   await pool.query(`
     ALTER TABLE pros
       ADD COLUMN IF NOT EXISTS code                    TEXT UNIQUE,

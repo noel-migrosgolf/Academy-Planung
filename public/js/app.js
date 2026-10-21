@@ -24,10 +24,6 @@
     api,
     toast,
     reload: () => loadPros(),
-    showCalendar: (id) => {
-      Planner.showOnly(id);
-      showPage("calendar");
-    },
   });
 
   async function api(path, { method = "GET", body } = {}) {
@@ -145,6 +141,36 @@
         td.textContent = value;
         tr.appendChild(td);
       }
+
+      // Admin-Rechte direkt in der Tabelle umschalten
+      const adminCell = document.createElement("td");
+      const adminLabel = document.createElement("label");
+      adminLabel.className = "check sm";
+      const adminBox = document.createElement("input");
+      adminBox.type = "checkbox";
+      adminBox.checked = user.is_admin;
+      adminLabel.append(adminBox, document.createTextNode("Admin"));
+      adminBox.addEventListener("change", async () => {
+        const self = user.id === session?.id;
+        if (self && !adminBox.checked && !confirm("Damit entziehst du dir selbst die Admin-Rechte. Fortfahren?")) {
+          adminBox.checked = true;
+          return;
+        }
+        try {
+          await api(`/users/${user.id}`, { method: "PATCH", body: { is_admin: adminBox.checked } });
+          toast(`${user.name}: Admin-Rechte ${adminBox.checked ? "erteilt" : "entzogen"}`);
+          if (self) {
+            ({ user: session } = await api("/me"));
+            render();
+          }
+        } catch (err) {
+          adminBox.checked = !adminBox.checked;
+          toast(err.message);
+        }
+      });
+      adminCell.appendChild(adminLabel);
+      tr.appendChild(adminCell);
+
       const actions = document.createElement("td");
       const del = document.createElement("button");
       del.className = "btn sm danger";
@@ -154,6 +180,12 @@
         try {
           await api(`/users/${user.id}`, { method: "DELETE" });
           toast(`Benutzer «${user.username}» gelöscht`);
+          if (user.id === session?.id) {
+            // Eigenes Konto gelöscht: Anmeldung ist damit beendet.
+            session = null;
+            render();
+            return;
+          }
           loadUsers();
         } catch (err) {
           toast(err.message);
@@ -380,6 +412,7 @@
           name: form.elements.name.value,
           username: form.username.value,
           password: form.password.value,
+          is_admin: form.elements.is_admin.checked,
         },
       });
       form.reset();

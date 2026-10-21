@@ -6,7 +6,7 @@
   const WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
   const RULES = { wochenend_wechsel_AB: "Wochenend-Wechsel A/B" };
 
-  let ctx = null; // { api, toast, reload, showCalendar }
+  let ctx = null; // { api, toast, reload }
   let editing = null; // Pro im Dialog, null = neuer Pro
 
   function formatDate(iso) {
@@ -31,8 +31,6 @@
 
   function card(pro, isAdmin) {
     const c = el("div", "card pro");
-    c.tabIndex = 0;
-    c.title = `Kalender für ${pro.name} anzeigen`;
 
     const head = el("div", "pro-head");
     const title = el("div");
@@ -42,10 +40,7 @@
     if (isAdmin) {
       const edit = el("button", "btn sm", "Bearbeiten");
       edit.type = "button";
-      edit.addEventListener("click", (e) => {
-        e.stopPropagation();
-        openDialog(pro);
-      });
+      edit.addEventListener("click", () => openDialog(pro));
       head.append(edit);
     }
     c.append(head);
@@ -60,12 +55,6 @@
     rows.append(row("Soll-Auslastung", `${pro.auslastung_soll_prozent} %`));
     rows.append(row("Abwesenheiten", pro.abwesenheiten.length ? pro.abwesenheiten.map(absenceText).join("\n") : "keine"));
     c.append(rows);
-
-    const open = () => ctx.showCalendar(pro.id);
-    c.addEventListener("click", open);
-    c.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && e.target === c) open();
-    });
     return c;
   }
 

@@ -323,8 +323,7 @@ table.t td:last-child { text-align: right; }
 /* Pros */
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .pros { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
-.pro { padding: 16px; cursor: pointer; transition: border-color .15s; display: flex; flex-direction: column; gap: 12px; }
-.pro:hover, .pro:focus-visible { border-color: var(--line-hover); outline: none; }
+.pro { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .pro-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .pro .nm { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
 .pro .meta { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
@@ -349,6 +348,8 @@ label.check {
 }
 label.check:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
 label.check input { width: auto; height: auto; margin: 0; accent-color: var(--accent); }
+label.check.sm { display: inline-flex; height: 28px; padding: 0 9px; font-size: 12.5px; }
+.form > label.check { align-self: flex-start; }
 .checks.days label.check { width: 44px; justify-content: center; padding: 0; }
 .checks.days input { display: none; }
 .absences { display: flex; flex-direction: column; gap: 6px; }

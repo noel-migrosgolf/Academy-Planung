@@ -355,11 +355,5 @@
     render();
   }
 
-  // Kalender auf einen einzelnen Pro filtern.
-  function showOnly(id) {
-    state.hidden = new Set(pros.filter((p) => p.id !== id).map((p) => p.id));
-    saveState();
-  }
-
-  window.Planner = { init, setPros, render, showOnly };
+  window.Planner = { init, setPros, render };
 })();

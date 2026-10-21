@@ -71,7 +71,7 @@ async function loadSession(req, res, next) {
   if (!token) return next();
   try {
     const { rows } = await pool.query(
-      `SELECT s.role, u.id, u.name, u.username
+      `SELECT s.role, u.id, u.name, u.username, u.is_admin
          FROM sessions s LEFT JOIN users u ON u.id = s.user_id
         WHERE s.token_hash = $1 AND s.expires_at > now()`,
       [sha256(token)]
@@ -80,7 +80,9 @@ async function loadSession(req, res, next) {
     if (row && row.role === "admin") {
       req.session = { role: "admin", name: "Administrator", username: "admin" };
     } else if (row && row.id) {
-      req.session = { role: "user", id: row.id, name: row.name, username: row.username };
+      // Admin-Rechte werden bei jeder Anfrage aus dem Benutzerkonto gelesen,
+      // damit Änderungen sofort wirken.
+      req.session = { role: row.is_admin ? "admin" : "user", id: row.id, name: row.name, username: row.username };
     }
     next();
   } catch (err) {

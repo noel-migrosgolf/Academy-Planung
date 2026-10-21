@@ -161,7 +161,7 @@
         <div class="page-head">
           <div>
             <h1>Pros</h1>
-            <p class="lead">Einstellungen und Einsatzbereiche aller Pros. Klick auf eine Karte zeigt den Kalender nur für diesen Pro.</p>
+            <p class="lead">Einstellungen und Einsatzbereiche aller Pros.</p>
           </div>
           <button id="btn-new-pro" class="btn primary" data-admin hidden>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -206,6 +206,7 @@
               <label>Passwort
                 <input name="password" type="password" autocomplete="new-password" minlength="6" required>
               </label>
+              <label class="check"><input type="checkbox" name="is_admin"> Admin-Rechte</label>
               <p class="form-error" role="alert"></p>
               <button class="btn primary block" type="submit">Benutzer anlegen</button>
             </div>
@@ -214,7 +215,7 @@
             <div class="hd"><h3>Alle Benutzer</h3><span class="sub" id="user-count"></span></div>
             <table class="t">
               <thead>
-                <tr><th>Name</th><th>Benutzername</th><th>Erstellt</th><th></th></tr>
+                <tr><th>Name</th><th>Benutzername</th><th>Erstellt</th><th>Rechte</th><th></th></tr>
               </thead>
               <tbody id="user-list"></tbody>
             </table>
