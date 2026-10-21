@@ -393,6 +393,16 @@ async function saveRule(res, run) {
   }
 }
 
+// Warum ist die Regel (nicht) erfüllt?
+api.get("/rules/:id/check", auth.requireLogin, async (req, res) => {
+  try {
+    res.json({ lines: await planning.diagnoseRule(req.params.id) });
+  } catch (err) {
+    if (err instanceof planning.PlanningError) return res.status(404).json({ error: err.message });
+    throw err;
+  }
+});
+
 api.post("/rules", auth.requireDataAdmin, (req, res) =>
   saveRule(res, () => {
     const r = rulesData.normalize(req.body);

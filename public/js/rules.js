@@ -60,7 +60,9 @@
       const row = el("div", `rule-row${r.aktiv ? "" : " off"}${r.erfuellt ? " ok" : " bad"}`);
       row.append(el("span", "rule-ic", !r.aktiv ? "–" : r.erfuellt ? "✓" : "✗"));
       const main = el("div", "rule-main");
-      main.append(el("div", "rule-text", r.text));
+      const title = el("div", "rule-text");
+      title.append(el("span", "rule-id", `R${r.id}`), document.createTextNode(r.text));
+      main.append(title);
       const m = meterOf(r);
       const meter = el("div", "rule-meter");
       const bar = el("span", "af-bar");
@@ -69,9 +71,18 @@
       bar.append(fill);
       meter.append(bar, el("span", "tab", m.text), el("span", "rule-gap", gapText(r)));
       main.append(meter);
+      const why = el("div", "rule-why");
+      why.hidden = true;
+      main.append(why);
       row.append(main);
+      const actions = el("div", "rule-actions");
+      const whyBtn = el("button", "btn sm", "Warum?");
+      whyBtn.type = "button";
+      whyBtn.title = "Stand, Hindernisse und Lösung anzeigen";
+      whyBtn.addEventListener("click", () => toggleWhy(r, why));
+      actions.append(whyBtn);
+      row.append(actions);
       if (ctx.isAdmin()) {
-        const actions = el("div", "rule-actions");
         const button = (label, cls, run) => {
           const b = el("button", `btn sm${cls}`, label);
           b.type = "button";
@@ -81,9 +92,22 @@
         button(r.aktiv ? "Deaktivieren" : "Aktivieren", "", () => save({ ...bodyOf(r), aktiv: !r.aktiv }, r.id));
         button("Bearbeiten", "", () => startEdit(r));
         button("Löschen", " danger", () => remove(r));
-        row.append(actions);
       }
       box.append(row);
+    }
+  }
+
+  async function toggleWhy(r, box) {
+    if (!box.hidden) {
+      box.hidden = true;
+      return;
+    }
+    try {
+      const { lines } = await ctx.api(`/rules/${r.id}/check`);
+      box.replaceChildren(...lines.slice(1).map((line) => el("div", "", line)));
+      box.hidden = false;
+    } catch (err) {
+      ctx.toast(err.message);
     }
   }
 

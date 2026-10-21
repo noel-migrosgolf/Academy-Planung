@@ -503,6 +503,8 @@ fieldset > .btn { align-self: flex-start; }
 .rule-row.off .rule-ic { background: var(--surface-3); color: var(--ink-3); }
 .rule-main { flex: 1; min-width: 0; }
 .rule-text { font-weight: 600; }
+.rule-id { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 5px; background: var(--surface-3); color: var(--ink-2); margin-right: 8px; vertical-align: 1px; font-variant-numeric: tabular-nums; }
+.rule-why { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); font-size: 12.5px; color: var(--ink-2); display: flex; flex-direction: column; gap: 3px; }
 .rule-meter { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); margin-top: 4px; }
 .rule-gap { font-weight: 600; }
 .rule-row.bad .rule-gap { color: var(--crit-ink); }

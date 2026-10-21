@@ -145,7 +145,9 @@
       const row = el("div", `rule-row ${g.erfuellt ? "ok" : "bad"}`);
       row.append(el("span", "rule-ic", g.erfuellt ? "✓" : "✗"));
       const main = el("div", "rule-main");
-      main.append(el("div", "rule-text", g.regel), el("div", "rule-meter tab", `${g.vorher} → ${g.nachher}`));
+      const title = el("div", "rule-text");
+      title.append(el("span", "rule-id", g.id), document.createTextNode(g.regel));
+      main.append(title, el("div", "rule-meter tab", `${g.vorher} → ${g.nachher}`));
       row.append(main);
       box.append(row);
     }

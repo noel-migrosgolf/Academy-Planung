@@ -150,6 +150,7 @@ async function overview({ from, to, pro } = {}, db = pool) {
   const regeln = (await ruleStatus(db)).filter((r) => r.aktiv);
   return {
     regeln: regeln.map((r) => ({
+      id: `R${r.id}`,
       regel: r.text,
       ist: r.art === "wochentage" ? (r.ist_prozent === null ? "noch nichts geplant" : `${r.ist_prozent} %`) : `${r.ist_stunden} h`,
       erfuellt: r.erfuellt,
@@ -202,8 +203,8 @@ async function overview({ from, to, pro } = {}, db = pool) {
 function overviewText(o, { maxEvents = 400, parts = ["regeln", "pros", "typen", "events"] } = {}) {
   const lines = [];
   if (parts.includes("regeln") && o.regeln.length) {
-    lines.push("REGELN (Regel|ist|erfüllt)");
-    for (const r of o.regeln) lines.push([r.regel, r.ist, r.erfuellt ? "ja" : "nein"].join("|"));
+    lines.push("REGELN (ID|Regel|ist|erfüllt)");
+    for (const r of o.regeln) lines.push([r.id, r.regel, r.ist, r.erfuellt ? "ja" : "nein"].join("|"));
   }
   if (parts.includes("pros")) {
     lines.push("PROS (Name|Kürzel|Soll h|geplant brutto h|netto h|Auslastung %|frei|Einsatz)");
@@ -449,6 +450,139 @@ async function shareOf(db, rule, typeById) {
   return shareResult(rule, on, total);
 }
 
+// «R3» oder 3 → 3
+function ruleIdOf(value) {
+  const n = Number.parseInt(String(value ?? "").replace(/^r/i, ""), 10);
+  if (!Number.isInteger(n) || n < 1) throw new PlanningError("Bitte eine Regel-ID angeben, z. B. R3.");
+  return n;
+}
+
+// Warum ist eine Regel (nicht) erfüllt? Kurze Textzeilen für den Reiter «Regeln» und die KI.
+async function diagnoseRule(value, db = pool) {
+  const id = ruleIdOf(value);
+  const lk = await lookups(db);
+  const typeById = new Map(lk.types.map((t) => [t.id, t]));
+  const nameOf = (tid) => typeById.get(tid)?.name;
+  const rule = (await loadRules(db, { activeOnly: false })).find((r) => r.id === id);
+  if (!rule) throw new PlanningError(`Regel R${id} gibt es nicht.`);
+  const h = (min) => hoursText(min);
+  const lines = [`R${id}: ${rulesData.describe(rule, nameOf)}${rule.aktiv ? "" : " (inaktiv)"}`];
+  const { rows: events } = await db.query(`SELECT ${EVENT_FIELDS} FROM events`);
+  const proName = new Map(lk.pros.map((p) => [p.id, p.name]));
+  const byPro = (list, type) => {
+    const sums = new Map();
+    for (const ev of list) sums.set(ev.pro_id, (sums.get(ev.pro_id) || 0) + minutesOf(ev, type || typeById.get(ev.type_id), "brutto"));
+    return [...sums].sort((a, b) => b[1] - a[1]).map(([pid, m]) => `${proName.get(pid)} ${h(m)}`).join(", ") || "niemand";
+  };
+
+  if (rule.art === "wochentage") {
+    const days = new Set(rule.wochentage);
+    let on = 0;
+    let total = 0;
+    for (const tid of rule.type_ids) {
+      const type = typeById.get(tid);
+      if (!type) continue;
+      const list = events.filter((ev) => ev.type_id === tid);
+      const tOn = list.filter((ev) => days.has(eventsData.weekdayOf(ev.date))).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
+      const tTotal = list.reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
+      on += tOn;
+      total += tTotal;
+      // Liegen alle Termine des Kurses fest an Tagen ausserhalb der Auswahl?
+      const fixedDays = type.first_weekday === null ? null : type.series_offsets.map((o) => (type.first_weekday + o) % 7);
+      const never = fixedDays && fixedDays.every((d) => !days.has(d));
+      const always = fixedDays && fixedDays.every((d) => days.has(d));
+      lines.push(`${type.code || type.name}: ${h(tOn)} von ${h(tTotal)} an den gewählten Tagen${never ? " – findet nie an diesen Tagen statt (zählt nur dagegen)" : always ? " – findet immer an diesen Tagen statt" : ""}`);
+    }
+    const share = shareResult(rule, on, total);
+    if (share.ist_prozent === null) {
+      lines.push("Stand: noch keine Stunden dieser Kurse geplant – die Regel gilt als erfüllt.");
+    } else if (share.erfuellt) {
+      lines.push(`Stand: ${share.ist_prozent} % (mind. ${rule.prozent} %) – erfüllt.`);
+    } else {
+      const p = rule.prozent / 100;
+      const addOn = p < 1 ? (p * total - on) / (1 - p) : Infinity;
+      const removeOff = total - on / p; // so viel an anderen Tagen weniger, damit on / total = p
+      lines.push(`Stand: ${share.ist_prozent} % (mind. ${rule.prozent} %) – nicht erfüllt.`);
+      lines.push(`Lösung: ${Number.isFinite(addOn) ? `zusätzlich ${h(addOn)} an den gewählten Tagen einplanen oder ` : ""}${h(Math.max(0, removeOff))} an anderen Tagen streichen bzw. verschieben.`);
+    }
+    return lines;
+  }
+
+  const type = typeById.get(rule.type_id);
+  const inWindow = events.filter((ev) => ev.type_id === type.id && ev.date >= rule.von && ev.date <= rule.bis);
+  const ist = inWindow.reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
+  const target = rule.stunden * 60;
+  const ok = rulesData.OPS[rule.operator].ok(ist / 60, rule.stunden);
+  lines.push(`Stand: ${h(ist)} (Ziel: ${rulesData.OPS[rule.operator].label} ${rule.stunden} h) – ${ok ? "erfüllt" : "nicht erfüllt"}.`);
+  lines.push(`Verteilung im Zeitraum: ${byPro(inWindow, type)}.`);
+  if (ok) return lines;
+  if (rulesData.OPS[rule.operator].upper && ist > target) {
+    lines.push(`Grund: ${h(ist - target)} zu viel geplant. Lösung: Termine in diesem Zeitraum löschen oder verschieben.`);
+    return lines;
+  }
+
+  // Untergrenze nicht erreicht: was hindert das Auffüllen?
+  lines.push(`Es fehlen ${h(target - ist)}${rule.operator === "gt" ? " (plus etwas mehr, da «mehr als»)" : ""}.`);
+  if (type.fixed_start_min === null) {
+    lines.push("Grund: Der Kurs hat keine feste Zeit; «Auslasten» kann ihn nicht automatisch einplanen. Lösung: von Hand oder per KI einplanen.");
+  }
+  const from = type.einplanbar_von && type.einplanbar_von > rule.von ? type.einplanbar_von : rule.von;
+  const to = type.einplanbar_bis && type.einplanbar_bis < rule.bis ? type.einplanbar_bis : rule.bis;
+  if (type.einplanbar_von || type.einplanbar_bis) lines.push(`Einplanbar laut Kurs: ${type.einplanbar_von || "…"} bis ${type.einplanbar_bis || "…"} (Schnitt mit der Regel: ${from} bis ${to}).`);
+  if (type.max_stunden) {
+    const used = events.filter((ev) => ev.type_id === type.id).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
+    lines.push(`Kurs-Maximum: ${h(used)} von ${type.max_stunden} h verbraucht${used >= type.max_stunden * 60 - 1 ? " – erreicht, das blockiert weitere Termine" : ""}.`);
+  }
+  for (const other of (await loadRules(db)).filter((r) => r.art === "stunden" && r.id !== rule.id && r.type_id === type.id && rulesData.OPS[r.operator].upper)) {
+    if (other.von <= rule.bis && other.bis >= rule.von) {
+      lines.push(`Achtung: R${other.id} (${rulesData.describe(other, nameOf)}) begrenzt denselben Kurs im überlappenden Zeitraum.`);
+    }
+  }
+  const area = eventsData.AREAS[type.einsatzbereich];
+  const pros = lk.pros.filter((p) => p.sollstunden > 0 && areaAllows(type, p));
+  lines.push(`Pros im Einsatzbereich ${area?.label || "alle"}: ${pros.map((p) => p.name).join(", ") || "keine – deshalb kann niemand den Kurs übernehmen"}.`);
+  if (!pros.length || type.fixed_start_min === null) return lines;
+
+  // Mögliche Starttage und freie Pros
+  const busy = new Map();
+  for (const ev of events) {
+    const key = `${ev.pro_id}|${ev.date}`;
+    busy.set(key, [...(busy.get(key) || []), [ev.start_min, ev.end_min]]);
+  }
+  const isFree = (ev) => !(busy.get(`${ev.pro_id}|${ev.date}`) || []).some(([a, b]) => ev.start_min < b && ev.end_min > a);
+  const last = type.series_offsets[type.series_offsets.length - 1];
+  let starts = 0;
+  let seriesHours = 0;
+  let withPro = 0;
+  let withProFreeDays = 0;
+  for (let d = from; d <= to; d = eventsData.addDays(d, 1)) {
+    if (type.first_weekday !== null && eventsData.weekdayOf(d) !== type.first_weekday) continue;
+    if (eventsData.addDays(d, last) > to) break;
+    if (!starts++) seriesHours = eventsData.planNew(type, { pro_id: pros[0].id, date: d }).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
+    let any = false;
+    let anyFreeDays = false;
+    for (const pro of pros) {
+      const series = eventsData.planNew(type, { pro_id: pro.id, date: d });
+      if (!series.every(isFree)) continue;
+      any = true;
+      const off = new Set((pro.freie_tage || []).map((x) => WEEKDAY_INDEX[String(x).toLowerCase()]));
+      if (!series.some((ev) => off.has(eventsData.weekdayOf(ev.date)))) anyFreeDays = true;
+    }
+    if (any) withPro++;
+    if (anyFreeDays) withProFreeDays++;
+  }
+  if (!starts) {
+    lines.push(`Grund: Keine Serie passt ganz in den Zeitraum (eine Serie dauert ${last + 1} Tage${type.first_weekday !== null ? ` und beginnt immer am ${eventsData.WEEKDAYS[type.first_weekday]}` : ""}).`);
+    return lines;
+  }
+  lines.push(`Mögliche Starttage: ${starts}; davon mit mindestens einem freien Pro: ${withPro}, unter Beachtung der freien Tage: ${withProFreeDays} (je Serie ${h(seriesHours)}).`);
+  const possible = withPro * seriesHours;
+  lines.push(possible >= target - ist
+    ? "Es gibt genug Platz: «Auslasten» mit «Regeln zuerst erfüllen» kann die Regel erfüllen (ggf. «Freie Tage beachten» ausschalten)."
+    : `Grund: Selbst alle freien Starttage ergeben nur ${h(possible)} – die Pros sind zu dieser Zeit schon belegt. Lösung: Zeitraum vergrössern, Termine verschieben oder mehr Pros für ${area?.label || "den Kurs"} freigeben.`);
+  return lines;
+}
+
 // Obergrenzen (genau, höchstens) dürfen durch neue Termine nicht überschritten werden.
 // added/removed: Events mit date, start_min, end_min (bei Änderungen der alte Stand in removed).
 async function assertRules(db, type, added, removed = [], label = "") {
@@ -685,6 +819,7 @@ async function autoFill(
       ...rules.map((rule) => {
         const ist = Math.round((ruleUsed.get(rule.id) / 60) * 100) / 100;
         return {
+          id: `R${rule.id}`,
           regel: rulesData.describe(rule, nameOf),
           vorher: hoursOf(rulesBefore.get(rule.id)),
           nachher: hoursOf(ruleUsed.get(rule.id)),
@@ -692,6 +827,7 @@ async function autoFill(
         };
       }),
       ...shareRules.map((rule) => ({
+        id: `R${rule.id}`,
         regel: rulesData.describe(rule, nameOf),
         vorher: percentOf(rule.before),
         nachher: percentOf(rule),
@@ -783,6 +919,6 @@ async function describeEvents(list) {
 
 module.exports = {
   TYPE_FIELDS, EVENT_FIELDS, PlanningError,
-  loadType, assertFree, assertArea, assertCapacity, assertRules, ruleStatus, formatDate, clock, timeArg, minutesOf,
+  loadType, assertFree, assertArea, assertCapacity, assertRules, ruleStatus, diagnoseRule, formatDate, clock, timeArg, minutesOf,
   overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, autoFill, undoChange, describeEvents,
 };
