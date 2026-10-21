@@ -106,6 +106,18 @@
     return h * 60 + m;
   }
 
+  // Einsatzbereich eines Typs → Häkchen beim Pro (wie server/events.js)
+  const AREAS = {
+    kurse: { label: "Kurse", field: "kurse" },
+    bambini: { label: "Bambini", field: "bambinitraining" },
+    gce: { label: "GCE", field: "gce_training" },
+  };
+
+  function allowedPros(t) {
+    const area = AREAS[t?.einsatzbereich];
+    return area ? data.pros.filter((p) => p[area.field]) : data.pros;
+  }
+
   function proName(id) {
     return data.pros.find((p) => p.id === id)?.name || "–";
   }
@@ -152,7 +164,7 @@
       row.append(el("span", "n", `Termin ${i + 1}`), el("span", "d", date ? `${shortDate(date)}${time}` : "–"));
       const select = el("select", "fsel");
       select.append(new Option(`wie oben (${proName(Number(f.pro_id.value))})`, ""));
-      for (const p of data.pros) select.append(new Option(p.name, String(p.id)));
+      for (const p of allowedPros(t)) select.append(new Option(p.name, String(p.id)));
       select.value = previous[i] || "";
       row.append(select);
       rows.append(row);
@@ -199,6 +211,17 @@
     const f = $("#event-form").elements;
     const t = selectedType();
     if (!t) return;
+    // Nur Pros mit passendem Einsatzbereich zur Auswahl
+    const pros = allowedPros(t);
+    const current = Number(f.pro_id.value);
+    fillSelect(f.pro_id, pros, (p) => p.name);
+    if (pros.some((p) => p.id === current)) f.pro_id.value = String(current);
+    const area = AREAS[t.einsatzbereich];
+    const hint = $("#event-area-hint");
+    hint.hidden = !area || (pros.some((p) => p.id === current) && pros.length > 0);
+    hint.textContent = !pros.length
+      ? `Kein Pro ist im Einsatzbereich ${area?.label} eingetragen.`
+      : `«${proName(current)}» ist nicht im Einsatzbereich ${area?.label}; bitte einen passenden Pro wählen.`;
     const fixed = t.fixed_start_min !== null;
     if (fixed) {
       f.start.value = clock(t.fixed_start_min);
@@ -255,7 +278,10 @@
     fillSelect(f.type_id, types, (x) => (isSeriesType(x) ? `${x.name} (${x.series_offsets.length} Termine)` : x.name));
     fillSelect(f.pro_id, data.pros, (p) => p.name);
     const v = event || prefill;
-    f.type_id.value = String(v.type_id || types[0].id);
+    // Neues Event für einen bestimmten Pro: ersten Typ wählen, den dieser Pro übernehmen darf
+    const proPrefill = data.pros.find((p) => p.id === v.pro_id);
+    const fitting = proPrefill && types.find((x) => allowedPros(x).includes(proPrefill));
+    f.type_id.value = String(v.type_id || (fitting || types[0]).id);
     f.pro_id.value = String(v.pro_id || data.pros[0].id);
     f.date.value = v.date || D.isoKey(new Date(2027, 0, 4));
     f.start.value = clock(v.start_min ?? 9 * 60);
@@ -348,6 +374,7 @@
     const f = form.elements;
     f.name.value = type?.name || "";
     f.code.value = type?.code || "";
+    f.einsatzbereich.value = type ? type.einsatzbereich || "" : "kurse";
     f.color.value = type?.color || "#6a8fd8";
     f.calc.value = type?.calc || "faktor";
     f.brutto_min.value = type?.brutto_min ?? 30;
@@ -371,6 +398,7 @@
     return {
       name: f.name.value,
       code: f.code.value,
+      einsatzbereich: f.einsatzbereich.value || null,
       color: f.color.value,
       calc: f.calc.value,
       brutto_min: Number(f.brutto_min.value),
@@ -407,7 +435,10 @@
     name: (t) => t.name,
     time: (t) => t.fixed_start_min,
     terms: (t) => t.series_offsets.length,
+    area: (t) => AREAS[t.einsatzbereich]?.label ?? "alle",
   };
+
+  let areaFilter = "";
 
   function sortedTypes() {
     const value = SORT_VALUES[typeSort.key] || SORT_VALUES.code;
@@ -436,7 +467,8 @@
       th.classList.toggle("sorted", th.dataset.sort === typeSort.key);
       th.dataset.dir = th.dataset.sort === typeSort.key ? (typeSort.dir > 0 ? "asc" : "desc") : "";
     });
-    for (const t of sortedTypes()) {
+    const shown = sortedTypes().filter((t) => !areaFilter || t.einsatzbereich === areaFilter || !t.einsatzbereich);
+    for (const t of shown) {
       const tr = el("tr");
       const name = el("td");
       const dot = el("span", "gdot");
@@ -449,7 +481,7 @@
         ? "frei wählbar"
         : `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}${booked > t.fixed_end_min ? `, Puffer bis ${clock(booked)}` : ""}`;
       const terms = isSeriesType(t) ? `${t.series_offsets.length} (${patternText(t)})` : t.first_weekday !== null ? `1 (${D.WEEKDAYS[t.first_weekday]})` : "1";
-      tr.append(el("td", "tab muted", t.code || "–"), name, el("td", "muted", hoursText(t)), el("td", "tab", time), el("td", "", terms));
+      tr.append(el("td", "tab muted", t.code || "–"), name, el("td", "", AREAS[t.einsatzbereich]?.label ?? "alle"), el("td", "muted", hoursText(t)), el("td", "tab", time), el("td", "", terms));
       const actions = el("td");
       if (ctx.isAdmin()) {
         const btn = el("button", "btn sm", "Bearbeiten");
@@ -519,6 +551,13 @@
       th.title = "Sortieren";
       th.addEventListener("click", () => setTypeSort(th.dataset.sort));
     });
+    document.querySelectorAll("#type-area-filter button").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        areaFilter = btn.dataset.area;
+        document.querySelectorAll("#type-area-filter button").forEach((b) => b.classList.toggle("on", b === btn));
+        renderTypes();
+      })
+    );
 
     const ef = $("#event-form");
     ef.elements.type_id.addEventListener("change", () => applyType({ adjustDate: true }));
@@ -526,7 +565,10 @@
       renderSeriesRows();
       updateWeekdayHint();
     });
-    ef.elements.pro_id.addEventListener("change", renderSeriesRows);
+    ef.elements.pro_id.addEventListener("change", () => {
+      $("#event-area-hint").hidden = true;
+      renderSeriesRows();
+    });
     ["start", "end"].forEach((n) => ef.elements[n].addEventListener("input", updatePreview));
 
     ef.addEventListener("submit", async (e) => {

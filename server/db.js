@@ -96,8 +96,14 @@ async function migrate() {
     `SELECT 1 FROM information_schema.columns
       WHERE table_schema = current_schema() AND table_name = 'event_types' AND column_name = 'series_offsets'`
   );
+  // Einsatzbereich je Event-Typ; beim Einführen gehören alle bestehenden Typen zu «Kurse».
+  const { rows: areaCol } = await pool.query(
+    `SELECT 1 FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'event_types' AND column_name = 'einsatzbereich'`
+  );
   await pool.query(`
     ALTER TABLE event_types
+      ADD COLUMN IF NOT EXISTS einsatzbereich  TEXT,
       ADD COLUMN IF NOT EXISTS calc            TEXT NOT NULL DEFAULT 'faktor',
       ADD COLUMN IF NOT EXISTS brutto_fix_min  INTEGER,
       ADD COLUMN IF NOT EXISTS netto_fix_min   INTEGER,
@@ -113,6 +119,7 @@ async function migrate() {
       ADD COLUMN IF NOT EXISTS series_index INTEGER;
     CREATE INDEX IF NOT EXISTS events_series_idx ON events (series_id);
   `);
+  if (!areaCol.length) await pool.query("UPDATE event_types SET einsatzbereich = 'kurse'");
 
   async function insertType(seed) {
     const t = events.normalizeType(seed);

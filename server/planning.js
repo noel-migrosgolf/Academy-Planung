@@ -53,6 +53,25 @@ async function assertFree(db, ev, ignoreId, label) {
   }
 }
 
+// Ein Pro darf nur Typen seines Einsatzbereichs übernehmen (Typ ohne Bereich: alle Pros).
+function areaAllows(type, pro) {
+  const area = eventsData.AREAS[type.einsatzbereich];
+  return !area || pro[area.proField] === true;
+}
+
+async function assertArea(db, type, proIds, label = "") {
+  const area = eventsData.AREAS[type.einsatzbereich];
+  if (!area) return;
+  const { rows } = await db.query(
+    `SELECT name FROM pros WHERE id = ANY($1::int[]) AND NOT ${area.proField} ORDER BY name`,
+    [[...new Set(proIds)]]
+  );
+  if (rows.length) {
+    const names = rows.map((r) => `«${r.name}»`).join(", ");
+    throw new eventsData.ValidationError(`${label}${names} ${rows.length > 1 ? "sind" : "ist"} nicht im Einsatzbereich ${area.label}.`);
+  }
+}
+
 // --- Namen auflösen (Pro per Name oder Kürzel, Typ per Name oder ID) ---
 
 async function lookups(db) {
@@ -123,6 +142,7 @@ async function overview({ from, to, pro } = {}, db = pool) {
     }),
     typen: lk.types.map((t) => ({
       id: t.code,
+      bereich: eventsData.AREAS[t.einsatzbereich]?.label || "alle",
       name: t.name,
       stunden: t.calc === "pauschal"
         ? `pro Termin ${t.brutto_fix_min / 60} h brutto, ${t.netto_fix_min / 60} h netto`
@@ -159,9 +179,9 @@ function overviewText(o, { maxEvents = 400, parts = ["pros", "typen", "events"] 
     }
   }
   if (parts.includes("typen")) {
-    lines.push("TYPEN (ID|Name|Stunden|Zeit|erster Wochentag|Termine Tage ab Start)");
+    lines.push("TYPEN (ID|Name|Einsatzbereich|Stunden|Zeit|erster Wochentag|Termine Tage ab Start)");
     for (const t of o.typen) {
-      lines.push([t.id || "-", t.name, t.stunden, t.zeit, t.erster_wochentag || "-", t.termine_tage_ab_start.join(",")].join("|"));
+      lines.push([t.id || "-", t.name, t.bereich, t.stunden, t.zeit, t.erster_wochentag || "-", t.termine_tage_ab_start.join(",")].join("|"));
     }
   }
   if (parts.includes("events")) {
@@ -233,6 +253,7 @@ async function bulkCreate(items, { dryRun = false, userId = null } = {}) {
         end_min: timeArg(item.end_min ?? item.bis),
         notiz: item.notiz,
       });
+      await assertArea(db, type, planned.map((ev) => ev.pro_id), label);
       for (const ev of planned) {
         await assertFree(db, ev, 0, `${label}${planned.length > 1 ? `Termin ${ev.series_index}: ` : ""}`);
         const { rows } = await db.query(
@@ -290,6 +311,7 @@ async function bulkUpdate(changes, { dryRun = false } = {}) {
         end_min: has(c.bis) ? timeArg(c.bis) : current.end_min,
         notiz: c.notiz ?? current.notiz,
       });
+      await assertArea(db, type, [ev.pro_id], label);
       await assertFree(db, ev, id, label);
       const { rows: done } = await db.query(
         `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
@@ -379,9 +401,14 @@ async function autoFill({ pros, ziel_prozent, typen, von, bis, freie_tage_beacht
       const freeDays = freie_tage_beachten ? new Set((pro.freie_tage || []).map((d) => WEEKDAY_INDEX[String(d).toLowerCase()])) : new Set();
       let have = before;
       const perType = new Map();
+      if (!types.some((t) => areaAllows(t, pro))) {
+        summary.push({ pro: pro.name, hinweis: "keine passenden Typen für den Einsatzbereich" });
+        continue;
+      }
       for (const idx of order) {
         if (have >= goal) break;
         const { type, date } = candidates[idx];
+        if (!areaAllows(type, pro)) continue;
         const series = eventsData.planNew(type, { pro_id: pro.id, date });
         const minutes = series.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
         if (have + minutes > goal + minutes / 2) continue; // nicht deutlich übers Ziel
@@ -487,6 +514,6 @@ async function describeEvents(list) {
 
 module.exports = {
   TYPE_FIELDS, EVENT_FIELDS, PlanningError,
-  loadType, assertFree, formatDate, clock, timeArg, minutesOf,
+  loadType, assertFree, assertArea, formatDate, clock, timeArg, minutesOf,
   overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, autoFill, undoChange, describeEvents,
 };

@@ -195,10 +195,16 @@
             <h3>Event-Typen</h3>
             <span class="sub">Brutto zählt gegen die Sollstunden, Netto ist die effektive Unterrichtszeit</span>
             <span class="spacer"></span>
+            <div class="seg" role="tablist" aria-label="Einsatzbereich" id="type-area-filter">
+              <button type="button" data-area="" class="on">Alle</button>
+              <button type="button" data-area="kurse">Kurse</button>
+              <button type="button" data-area="bambini">Bambini</button>
+              <button type="button" data-area="gce">GCE</button>
+            </div>
             <button id="btn-new-type" class="btn sm" hidden>+ Neuer Typ</button>
           </div>
           <table class="t">
-            <thead id="type-head"><tr><th data-sort="code">ID</th><th data-sort="name">Typ</th><th>Stunden</th><th data-sort="time">Zeit</th><th data-sort="terms">Termine</th><th></th></tr></thead>
+            <thead id="type-head"><tr><th data-sort="code">ID</th><th data-sort="name">Typ</th><th data-sort="area">Bereich</th><th>Stunden</th><th data-sort="time">Zeit</th><th data-sort="terms">Termine</th><th></th></tr></thead>
             <tbody id="type-list"></tbody>
           </table>
           <p id="type-empty" class="empty">Noch keine Event-Typen.</p>
@@ -448,6 +454,7 @@
             <select name="pro_id" class="fsel"></select>
           </label>
         </div>
+        <p class="note" id="event-area-hint" hidden></p>
         <label>Datum
           <input name="date" type="date" required>
         </label>
@@ -500,6 +507,14 @@
             <input name="color" type="color">
           </label>
         </div>
+        <label>Einsatzbereich (nur Pros mit diesem Bereich können eingeteilt werden)
+          <select name="einsatzbereich" class="fsel">
+            <option value="kurse">Kurse</option>
+            <option value="bambini">Bambini</option>
+            <option value="gce">GCE</option>
+            <option value="">Alle Pros</option>
+          </select>
+        </label>
         <label>Stunden-Berechnung
           <select name="calc" class="fsel">
             <option value="faktor">Pro 30 min geplanter Zeit (z. B. Einzelstunde)</option>

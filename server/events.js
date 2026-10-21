@@ -19,13 +19,14 @@ const crypto = require("crypto");
 const WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
 
 const SEED_TYPES = [
-  { name: "Einzelstunde", calc: "faktor", brutto_min: 30, netto_min: 25, color: "#6a8fd8" },
+  { name: "Einzelstunde", einsatzbereich: "kurse", calc: "faktor", brutto_min: 30, netto_min: 25, color: "#6a8fd8" },
 ];
 
 // Neuer Typ, der einmalig beim Ausbau auf Serien angelegt wird.
 const SEED_SERIES_TYPES = [
   {
     name: "Platzreife Teil 1 A",
+    einsatzbereich: "kurse",
     calc: "pauschal",
     brutto_min: 30,
     netto_min: 30,
@@ -39,8 +40,15 @@ const SEED_SERIES_TYPES = [
   },
 ];
 
+// Einsatzbereich eines Event-Typs → Häkchen beim Pro (leer = alle Pros)
+const AREAS = {
+  kurse: { label: "Kurse", proField: "kurse" },
+  bambini: { label: "Bambini", proField: "bambinitraining" },
+  gce: { label: "GCE", proField: "gce_training" },
+};
+
 const TYPE_COLUMNS = [
-  "code", "name", "color", "calc", "brutto_min", "netto_min", "brutto_fix_min", "netto_fix_min",
+  "code", "einsatzbereich", "name", "color", "calc", "brutto_min", "netto_min", "brutto_fix_min", "netto_fix_min",
   "fixed_start_min", "fixed_end_min", "first_weekday", "series_offsets", "series_times",
 ];
 
@@ -79,7 +87,9 @@ function normalizeType(body) {
   if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new ValidationError("Ungültige Farbe.");
 
   const calc = body.calc === "pauschal" ? "pauschal" : "faktor";
-  const t = { code, name, color, calc, brutto_min: 30, netto_min: 30, brutto_fix_min: null, netto_fix_min: null };
+  const einsatzbereich = empty(body.einsatzbereich) ? null : String(body.einsatzbereich);
+  if (einsatzbereich && !AREAS[einsatzbereich]) throw new ValidationError("Unbekannter Einsatzbereich.");
+  const t = { code, einsatzbereich, name, color, calc, brutto_min: 30, netto_min: 30, brutto_fix_min: null, netto_fix_min: null };
   if (calc === "faktor") {
     t.brutto_min = int(body.brutto_min, "Brutto (Minuten pro 30 min)", 0, 30);
     t.netto_min = int(body.netto_min, "Netto (Minuten pro 30 min)", 0, 30);
@@ -245,6 +255,6 @@ function planUpdate(existing, type, body) {
 }
 
 module.exports = {
-  SEED_TYPES, SEED_SERIES_TYPES, TYPE_COLUMNS, WEEKDAYS, ValidationError,
+  SEED_TYPES, SEED_SERIES_TYPES, TYPE_COLUMNS, WEEKDAYS, AREAS, ValidationError,
   normalizeType, typeValues, planNew, planUpdate, id, addDays, weekdayOf, SYNC_FIXED_EVENTS_SQL,
 };

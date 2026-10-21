@@ -258,6 +258,7 @@ api.post("/events", auth.requireLogin, versioned(async (req, b) => `Geplant: ${a
   inTransaction(res, async (db) => {
     const type = await loadType(db, eventsData.id(req.body.type_id, "Event-Typ"));
     const planned = eventsData.planNew(type, req.body);
+    await planning.assertArea(db, type, planned.map((ev) => ev.pro_id));
     const created = [];
     for (const ev of planned) {
       await assertFree(db, ev, 0, planned.length > 1 ? `Termin ${ev.series_index}: ` : "");
@@ -278,7 +279,9 @@ api.put("/events/:id", auth.requireLogin, versioned(async (req, b) => `Geändert
     const { rows } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE id = $1 FOR UPDATE`, [eventId]);
     if (!rows[0]) return res.status(404).json({ error: "Event nicht gefunden." });
     const typeId = rows[0].series_id ? rows[0].type_id : eventsData.id(req.body.type_id, "Event-Typ");
-    const ev = eventsData.planUpdate(rows[0], await loadType(db, typeId), req.body);
+    const type = await loadType(db, typeId);
+    const ev = eventsData.planUpdate(rows[0], type, req.body);
+    await planning.assertArea(db, type, [ev.pro_id]);
     await assertFree(db, ev, eventId, "");
     const { rows: updated } = await db.query(
       `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
