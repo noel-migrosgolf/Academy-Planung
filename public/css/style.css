@@ -387,6 +387,19 @@ input[type="color"] { padding: 3px; height: 34px; cursor: pointer; }
 .pro-row .k { color: var(--ink-3); }
 .pro-row .v { color: var(--ink); white-space: pre-line; }
 
+.pro-plan { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.pro-plan-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+.pro-plan .k { font-size: 12px; color: var(--ink-3); }
+.pro-plan .big { font-size: 22px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.st { font-size: 11.5px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.st.ok { color: var(--good); }
+.meter { position: relative; height: 8px; border-radius: 99px; background: var(--surface-3); }
+.meter i { position: absolute; inset: 0 auto 0 0; border-radius: 99px; background: var(--accent); }
+.meter i.over { background: var(--critical); }
+.meter b { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 2px; background: var(--ink); }
+.pro-rows.plain { padding-top: 0; border-top: 0; }
+.hm .pl small { margin-left: 6px; font-size: 11px; font-weight: 500; color: var(--ink-3); }
+
 /* Pro-Dialog */
 .dialog-wide { width: min(560px, calc(100vw - 32px)); }
 .dialog .card { max-height: calc(100vh - 48px); overflow: auto; }

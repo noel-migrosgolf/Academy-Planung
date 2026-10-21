@@ -29,7 +29,46 @@
     return r;
   }
 
-  function card(pro, isAdmin) {
+  // Soll / Geplant / Auslastung mit Balken; die Markierung zeigt die Soll-Auslastung
+  function planning(pro, planned) {
+    const E = window.Events;
+    const box = el("div", "pro-plan");
+    const pct = E.percentOfSoll(pro, planned.brutto);
+    const target = pro.auslastung_soll_prozent;
+
+    const top = el("div", "pro-plan-top");
+    const label = el("div");
+    label.append(el("span", "k", "Auslastung 2027"), el("div", "big", pct === null ? "–" : E.formatPercent(pct)));
+    top.append(label);
+    if (pct !== null) {
+      const ok = pct >= target;
+      top.append(el("span", ok ? "st ok" : "st", ok ? "Ziel erreicht" : `Ziel ${target} %`));
+    }
+    box.append(top);
+
+    const meter = el("div", "meter");
+    const fill = el("i");
+    fill.style.width = `${Math.min(pct || 0, 100)}%`;
+    if (pct > 100) fill.classList.add("over");
+    const mark = el("b");
+    mark.style.left = `${Math.min(target, 100)}%`;
+    mark.title = `Soll-Auslastung ${target} %`;
+    meter.append(fill, mark);
+    box.append(meter);
+
+    const soll = Number(pro.sollstunden) * 60;
+    const open = Math.max(0, (soll * target) / 100 - planned.brutto);
+    const rows = el("div", "pro-rows plain");
+    rows.append(
+      row("Soll", `${Number(pro.sollstunden).toLocaleString("de-CH")} h`),
+      row("Geplant", `${E.formatHM(planned.brutto)} brutto · ${E.formatHM(planned.netto)} netto`),
+      row("Offen bis Ziel", E.formatHM(open))
+    );
+    box.append(rows);
+    return box;
+  }
+
+  function card(pro, isAdmin, planned) {
     const c = el("div", "card pro");
 
     const head = el("div", "pro-head");
@@ -48,6 +87,7 @@
     const tags = el("div", "tags");
     tags.append(tag("Kurse", pro.kurse), tag("Bambini", pro.bambinitraining), tag("GCE", pro.gce_training));
     c.append(tags);
+    c.append(planning(pro, planned));
 
     const rows = el("div", "pro-rows");
     rows.append(row("Freie Tage", pro.freie_tage.length ? pro.freie_tage.join(", ") : "keine"));
@@ -60,7 +100,8 @@
 
   function render(pros, isAdmin) {
     const list = $("#pro-list");
-    list.replaceChildren(...pros.map((p) => card(p, isAdmin)));
+    const planned = window.Events.plannedByPro();
+    list.replaceChildren(...pros.map((p) => card(p, isAdmin, planned.get(p.id) || { brutto: 0, netto: 0 })));
     if (!pros.length) list.append(el("p", "empty", "Noch keine Pros erfasst."));
   }
 

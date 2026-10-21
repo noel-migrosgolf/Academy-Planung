@@ -438,8 +438,17 @@
       grid.appendChild(holidayBand(holiday));
     }
 
+    const planned = E.plannedByPro();
     for (const pro of list) {
-      grid.appendChild(el("div", "pl", pro.name));
+      const pl = el("div", "pl");
+      const pct = E.percentOfSoll(pro, planned.get(pro.id)?.brutto || 0);
+      pl.append(el("span", "", pro.name));
+      if (pct !== null) {
+        const small = el("small", "", E.formatPercent(pct));
+        small.title = `Geplant ${E.formatHM(planned.get(pro.id)?.brutto || 0)} brutto von ${Number(pro.sollstunden).toLocaleString("de-CH")} Sollstunden`;
+        pl.append(small);
+      }
+      grid.appendChild(pl);
       for (const [i, monday] of mondays.entries()) {
         const minutes = Array.from({ length: 7 }, (_, d) => sum(eventsOn(D.addDays(monday, d), pro.id))).reduce((a, b) => a + b, 0);
         const x = heatCell(minutes, 8 * 60, `${pro.name} · KW ${i + 1}`);

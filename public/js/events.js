@@ -29,6 +29,28 @@
     return Math.round(ev.start_min + minutesOf(ev, "netto"));
   }
 
+  // Geplante Stunden je Pro (Minuten brutto/netto) aus allen geladenen Events
+  function plannedByPro() {
+    const result = new Map();
+    for (const ev of data.events) {
+      const entry = result.get(ev.pro_id) || { brutto: 0, netto: 0 };
+      entry.brutto += minutesOf(ev, "brutto");
+      entry.netto += minutesOf(ev, "netto");
+      result.set(ev.pro_id, entry);
+    }
+    return result;
+  }
+
+  // Geplant (brutto) in Prozent der Sollstunden; null wenn keine Sollstunden
+  function percentOfSoll(pro, bruttoMinutes) {
+    if (!pro.sollstunden) return null;
+    return (bruttoMinutes / 60 / pro.sollstunden) * 100;
+  }
+
+  function formatPercent(value) {
+    return `${value.toLocaleString("de-CH", { maximumFractionDigits: value < 10 ? 1 : 0 })} %`;
+  }
+
   // 50 → "0:50 h", 90 → "1:30 h"
   function formatHM(min) {
     const total = Math.round(min);
@@ -301,5 +323,5 @@
     $("#btn-new-type").addEventListener("click", () => openType(null));
   }
 
-  window.Events = { init, setData, render, openEvent, eventMenu, minutesOf, lessonEnd, formatHM, formatShortHours, clock, typeOf };
+  window.Events = { init, setData, render, openEvent, eventMenu, minutesOf, lessonEnd, plannedByPro, percentOfSoll, formatPercent, formatHM, formatShortHours, clock, typeOf };
 })();
