@@ -5,7 +5,7 @@
 //                Wird angezeigt und von «Auslasten» eingehalten, sperrt aber nicht.
 // Gezählt werden Brutto-Stunden über alle Pros; jeder Termin zählt mit seinem eigenen Datum.
 
-const { ValidationError, WEEKDAYS } = require("./events");
+const { ValidationError, WEEKDAYS, validDate } = require("./events");
 
 const EPS = 0.01; // Stunden bzw. Prozentpunkte
 
@@ -20,9 +20,7 @@ const COLUMNS = ["art", "type_id", "type_ids", "von", "bis", "operator", "stunde
 
 function isoDate(value, label) {
   const date = String(value || "");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
-    throw new ValidationError(`${label}: bitte ein gültiges Datum angeben.`);
-  }
+  if (!validDate(date)) throw new ValidationError(`${label}: «${date}» ist kein gültiges Datum.`);
   return date;
 }
 

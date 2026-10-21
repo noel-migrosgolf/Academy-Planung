@@ -316,20 +316,17 @@
   async function deleteEvent(ev) {
     if (!ctx.canEdit()) return ctx.toast("Dieser Plan ist für dich nur zum Ansehen freigegeben.");
     const series = seriesOf(ev);
-    await ctx.api(`/events/${ev.id}${ev.series_id ? "?serie=1" : ""}`, { method: "DELETE" });
+    const { undo_token: token } = await ctx.api(`/events/${ev.id}${ev.series_id ? "?serie=1" : ""}`, { method: "DELETE" });
     const t = typeOf(ev);
     const label = ev.series_id
       ? `${t?.name || "Serie"} (${series.length} Termine) gelöscht`
       : `${t?.name || "Event"} ${clock(ev.start_min)}–${clock(ev.end_min)} gelöscht`;
-    ctx.toast(label, {
+    // Rückgängig stellt die gelöschten Termine unverändert wieder her (inkl. Notiz je Termin)
+    ctx.toast(label, token && {
       label: "Rückgängig",
       run: async () => {
         try {
-          const first = series[0];
-          const body = ev.series_id
-            ? { type_id: first.type_id, date: first.date, pro_id: first.pro_id, pros: series.map((x) => x.pro_id), notiz: first.notiz }
-            : { type_id: ev.type_id, pro_id: ev.pro_id, date: ev.date, start_min: ev.start_min, end_min: ev.end_min, notiz: ev.notiz };
-          await ctx.api("/events", { method: "POST", body });
+          await ctx.api(`/undo/${token}`, { method: "POST" });
           ctx.toast(ev.series_id ? "Serie wiederhergestellt" : "Event wiederhergestellt");
           ctx.reload();
         } catch (err) {

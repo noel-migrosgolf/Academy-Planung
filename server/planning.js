@@ -12,6 +12,12 @@ const EVENT_FIELDS =
 
 class PlanningError extends eventsData.ValidationError {}
 
+// Geplant wird das Jahr 2027: Auslastung und Kurs-Maxima zählen nur Termine in diesem Jahr
+// (Überschneidungen werden weiterhin gegen alle Termine geprüft).
+const YEAR_FROM = "2027-01-01";
+const YEAR_TO = "2027-12-31";
+const inYear = (ev) => ev.date >= YEAR_FROM && ev.date <= YEAR_TO;
+
 async function loadType(db, typeId) {
   const { rows } = await db.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [typeId]);
   if (!rows[0]) throw new eventsData.ValidationError("Event-Typ existiert nicht.");
@@ -23,10 +29,12 @@ function formatDate(iso) {
   return `${d}.${m}.${y}`;
 }
 
-// Uhrzeit «HH:MM» oder Minuten seit Mitternacht
+// Uhrzeit «HH:MM» oder Minuten seit Mitternacht. Ungültige Zeiten (z. B. 09:90) bleiben unverändert,
+// damit die Prüfung in events.js sie ablehnt statt still umzurechnen.
 function timeArg(value) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(value ?? "").trim());
-  return m ? Number(m[1]) * 60 + Number(m[2]) : value;
+  if (!m || Number(m[2]) > 59) return value;
+  return Number(m[1]) * 60 + Number(m[2]);
 }
 
 function clock(min) {
@@ -54,6 +62,32 @@ async function assertFree(db, planId, ev, ignoreId, label) {
   }
 }
 
+// Eingetragene Abwesenheit des Pros an diesem Datum (oder null)
+function absenceOn(pro, date) {
+  return (pro.abwesenheiten || []).find((a) => date >= a.von && date <= (a.bis || a.von)) || null;
+}
+
+async function assertAvailable(db, events, label = "") {
+  const ids = [...new Set(events.map((ev) => ev.pro_id))];
+  const { rows } = await db.query("SELECT id, name, abwesenheiten FROM pros WHERE id = ANY($1::int[])", [ids]);
+  const byId = new Map(rows.map((p) => [p.id, p]));
+  for (const ev of events) {
+    const pro = byId.get(ev.pro_id);
+    const absence = pro && absenceOn(pro, ev.date);
+    if (absence) {
+      throw new eventsData.ValidationError(
+        `${label}«${pro.name}» ist am ${formatDate(ev.date)} abwesend${absence.grund ? ` (${absence.grund})` : ""}.`
+      );
+    }
+  }
+}
+
+// Überschneiden sich Termine derselben Serie (gleicher Pro, gleicher Tag, inkl. Puffer)?
+function seriesOverlaps(series) {
+  return series.some((a, i) => series.some((b, j) => j > i && a.pro_id === b.pro_id && a.date === b.date
+    && a.start_min < b.end_min && b.start_min < a.end_min));
+}
+
 // Ein Pro darf nur Typen seines Einsatzbereichs übernehmen (Typ ohne Bereich: alle Pros).
 function areaAllows(type, pro) {
   const area = eventsData.AREAS[type.einsatzbereich];
@@ -75,7 +109,10 @@ async function assertArea(db, type, proIds, label = "") {
 
 // Höchstens max_stunden Sollstunden (brutto) je Typ, über alle Pros eines Plans.
 async function usedMinutes(db, planId, type) {
-  const { rows } = await db.query("SELECT start_min, end_min FROM events WHERE plan_id = $1 AND type_id = $2", [planId, type.id]);
+  const { rows } = await db.query(
+    "SELECT start_min, end_min FROM events WHERE plan_id = $1 AND type_id = $2 AND date BETWEEN $3 AND $4",
+    [planId, type.id, YEAR_FROM, YEAR_TO]
+  );
   return rows.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
 }
 
@@ -135,7 +172,7 @@ async function overview(planId, { from, to, pro } = {}, db = pool) {
 
   const { rows: all } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE plan_id = $1 ORDER BY date, start_min, id`, [planId]);
   const planned = new Map();
-  for (const ev of all) {
+  for (const ev of all.filter(inYear)) {
     const t = typeById.get(ev.type_id);
     const sum = planned.get(ev.pro_id) || { brutto: 0, netto: 0 };
     sum.brutto += minutesOf(ev, t, "brutto");
@@ -289,6 +326,7 @@ async function bulkCreate(planId, items, { dryRun = false, userId = null } = {})
         notiz: item.notiz,
       });
       await assertArea(db, type, planned.map((ev) => ev.pro_id), label);
+      await assertAvailable(db, planned, label);
       await assertCapacity(db, planId, type, sumBrutto(planned, type), label);
       await assertRules(db, planId, type, planned, [], label);
       for (const ev of planned) {
@@ -351,6 +389,7 @@ async function bulkUpdate(planId, changes, { dryRun = false } = {}) {
       });
       await assertArea(db, type, [ev.pro_id], label);
       const before = type.id === current.type_id ? minutesOf(current, type, "brutto") : 0;
+      await assertAvailable(db, [ev], label);
       await assertCapacity(db, planId, type, minutesOf(ev, type, "brutto") - before, label);
       await assertRules(db, planId, type, [ev], type.id === current.type_id ? [current] : [], label);
       await assertFree(db, planId, ev, id, label);
@@ -532,7 +571,7 @@ async function diagnoseRule(planId, value, db = pool) {
   const to = type.einplanbar_bis && type.einplanbar_bis < rule.bis ? type.einplanbar_bis : rule.bis;
   if (type.einplanbar_von || type.einplanbar_bis) lines.push(`Einplanbar laut Kurs: ${type.einplanbar_von || "…"} bis ${type.einplanbar_bis || "…"} (Schnitt mit der Regel: ${from} bis ${to}).`);
   if (type.max_stunden) {
-    const used = events.filter((ev) => ev.type_id === type.id).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
+    const used = events.filter((ev) => ev.type_id === type.id && inYear(ev)).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
     lines.push(`Kurs-Maximum: ${h(used)} von ${type.max_stunden} h verbraucht${used >= type.max_stunden * 60 - 1 ? " – erreicht, das blockiert weitere Termine" : ""}.`);
   }
   for (const other of (await loadRules(db, planId)).filter((r) => r.art === "stunden" && r.id !== rule.id && r.type_id === type.id && rulesData.OPS[r.operator].upper)) {
@@ -622,9 +661,13 @@ async function autoFill(
     return n;
   };
   if (!ziele?.length) checkPercent(ziel_prozent);
-  const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
-  const from = isDate(von) ? von : "2027-01-01";
-  const to = isDate(bis) ? bis : "2027-12-31";
+  const dateOr = (v, fallback, label) => {
+    if (v === undefined || v === null || v === "") return fallback;
+    if (!eventsData.validDate(String(v))) throw new PlanningError(`${label}: «${v}» ist kein gültiges Datum.`);
+    return String(v);
+  };
+  const from = dateOr(von, YEAR_FROM, "Von");
+  const to = dateOr(bis, YEAR_TO, "Bis");
   if (to < from) throw new PlanningError("Zeitraum: «bis» liegt vor «von».");
 
   return transaction(dryRun, "created", async (db) => {
@@ -669,8 +712,9 @@ async function autoFill(
       busy.set(key, [...(busy.get(key) || []), [ev.start_min, ev.end_min]]);
     };
     for (const ev of existing) {
-      const minutes = minutesOf(ev, typeById.get(ev.type_id), "brutto");
       book(ev);
+      if (!inYear(ev)) continue;
+      const minutes = minutesOf(ev, typeById.get(ev.type_id), "brutto");
       planned.set(ev.pro_id, (planned.get(ev.pro_id) || 0) + minutes);
       typeUsed.set(ev.type_id, (typeUsed.get(ev.type_id) || 0) + minutes);
     }
@@ -709,8 +753,9 @@ async function autoFill(
     function fits(type, series, pro) {
       if (!areaAllows(type, pro)) return false;
       const freeDays = freeDaysOf(pro);
-      if (series.some((ev) => freeDays.has(eventsData.weekdayOf(ev.date)) || !free(ev))) return false;
-      if (type.max_stunden && (typeUsed.get(type.id) || 0) + seriesMinutes(type, series) > type.max_stunden * 60 + 0.01) return false;
+      if (series.some((ev) => freeDays.has(eventsData.weekdayOf(ev.date)) || absenceOn(pro, ev.date) || !free(ev))) return false;
+      if (seriesOverlaps(series)) return false; // z. B. Puffer eines Termins reicht in den nächsten
+      if (type.max_stunden && (typeUsed.get(type.id) || 0) + seriesMinutes(type, series.filter(inYear)) > type.max_stunden * 60 + 0.01) return false;
       for (const rule of rules) {
         if (!rulesData.OPS[rule.operator].upper) continue;
         const add = series.filter((ev) => inRule(rule, ev)).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
@@ -729,7 +774,7 @@ async function autoFill(
     const toInsert = [];
     const perPro = new Map(); // Pro-ID → Map(Typ → Anzahl Serien)
     function commit(type, series, pro) {
-      const minutes = seriesMinutes(type, series);
+      const minutes = seriesMinutes(type, series.filter(inYear));
       for (const ev of series) {
         book(ev);
         toInsert.push(ev);
@@ -752,28 +797,37 @@ async function autoFill(
     const goalOf = new Map(targets.map(({ pro, percent }) => [pro.id, (pro.sollstunden * 60 * percent) / 100]));
     const before = new Map(lk.pros.map((p) => [p.id, planned.get(p.id) || 0]));
 
-    // 1) Regeln erfüllen (Untergrenzen)
+    // 1) Regeln erfüllen (Untergrenzen) – nur mit den ausgewählten Kursen und nur für Pros, die laut
+    //    ihrem Ziel noch Platz haben. Auch Serien, die nur teilweise im Regelzeitraum liegen, zählen
+    //    mit ihren Terminen im Zeitraum.
+    const selected = new Set(types.map((t) => t.id));
     if (regeln_erfuellen) {
       for (const rule of rules) {
         const op = rule.operator;
-        if (op === "max" || rule.type.fixed_start_min === null) continue;
+        if (op === "max" || !selected.has(rule.type_id) || rule.type.fixed_start_min === null) continue;
         const target = rule.stunden * 60;
         // erreicht: «mehr als» erst über dem Wert, «mindestens»/«genau» ab dem Wert
         const done = () => {
           const h = ruleUsed.get(rule.id) / 60;
           return op === "gt" ? h > rule.stunden + rulesData.EPS : h >= rule.stunden - rulesData.EPS;
         };
-        const rangeFrom = rule.von > from ? rule.von : from;
-        const rangeTo = rule.bis < to ? rule.bis : to;
-        for (const { type, date } of spread(candidatesFor(rule.type, rangeFrom, rangeTo))) {
+        const offsets = rule.type.series_offsets;
+        const touches = (date) => offsets.some((o) => {
+          const d = eventsData.addDays(date, o);
+          return d >= rule.von && d <= rule.bis;
+        });
+        for (const { type, date } of spread(candidatesFor(rule.type, from, to).filter((c) => touches(c.date)))) {
           if (done()) break;
-          const minutes = seriesMinutes(type, eventsData.planNew(type, { pro_id: 1, date })); // unabhängig vom Pro
-          if (op === "eq" && ruleUsed.get(rule.id) + minutes > target + 0.6) continue; // «genau» nicht überschreiten
-          // Pros mit der geringsten Auslastung im Verhältnis zu ihrem Ziel zuerst
-          const ranked = lk.pros
-            .filter((p) => p.sollstunden > 0)
-            .sort((a, b) => (planned.get(a.id) || 0) / (goalOf.get(a.id) || a.sollstunden * 60 || 1)
-              - (planned.get(b.id) || 0) / (goalOf.get(b.id) || b.sollstunden * 60 || 1));
+          // Beitrag zur Regel: Brutto-Minuten der Termine im Regelzeitraum (unabhängig vom Pro)
+          const sample = eventsData.planNew(type, { pro_id: 1, date });
+          const gain = sample.filter((ev) => inRule(rule, ev)).reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
+          if (op === "eq" && ruleUsed.get(rule.id) + gain > target + 0.6) continue; // «genau» nicht überschreiten
+          const minutes = seriesMinutes(type, sample.filter(inYear));
+          // Pros mit der geringsten Auslastung im Verhältnis zu ihrem Ziel zuerst; Ziel 0 % bekommt nichts
+          const ranked = targets
+            .map(({ pro }) => pro)
+            .filter((p) => goalOf.get(p.id) > 0 && (planned.get(p.id) || 0) + minutes <= goalOf.get(p.id) + minutes / 2)
+            .sort((a, b) => (planned.get(a.id) || 0) / goalOf.get(a.id) - (planned.get(b.id) || 0) / goalOf.get(b.id));
           for (const pro of ranked) {
             const series = eventsData.planNew(type, { pro_id: pro.id, date });
             if (!fits(type, series, pro)) continue;
@@ -853,23 +907,36 @@ async function autoFill(
   });
 }
 
+// Gleicher Inhalt (Typ, Pro, Datum, Zeit, Notiz)? Fehlen Felder (ältere Rückgängig-Daten), gilt «gleich».
+const EVENT_KEYS = ["type_id", "pro_id", "date", "start_min", "end_min", "notiz"];
+function sameEvent(current, expected) {
+  return EVENT_KEYS.every((k) => expected[k] === undefined || (current[k] ?? "") === (expected[k] ?? ""));
+}
+
 // Nimmt genau eine Sammel-Aktion zurück, ohne andere Daten zu berühren:
-// undo = { created: [{ id, created_at }] } | { deleted: [Zeilen] } | { updated: [Zeilen vorher] }.
-// Angelegte Events werden nur gelöscht, wenn auch der Erstellungszeitpunkt passt
-// (nach einer Wiederherstellung können IDs neu vergeben werden).
+// undo = { created: [Zeilen nachher] } | { deleted: [Zeilen] } | { updated: [Zeilen vorher], updated_after: [Zeilen nachher] }.
+// Wurde ein angelegtes oder geändertes Event seither weiter verändert, wird nichts zurückgenommen
+// (Konflikt statt stilles Überschreiben). Angelegte Events werden nur gelöscht, wenn auch der
+// Erstellungszeitpunkt passt (nach einer Wiederherstellung können IDs neu vergeben werden).
 // Ganz oder gar nicht; Konflikte (z. B. Überschneidung mit neueren Events) kommen als errors zurück.
 async function undoChange(planId, undo) {
   return transaction(false, "done", async (db) => {
     const errors = [];
     let done = 0;
-    if (undo.created?.length) {
-      const { rowCount } = await db.query(
-        `DELETE FROM events e USING unnest($1::int[], $2::timestamptz[]) AS u(id, created_at)
-          WHERE e.plan_id = $3 AND e.id = u.id AND date_trunc('milliseconds', e.created_at) = u.created_at`,
-        [undo.created.map((c) => c.id), undo.created.map((c) => c.created_at), planId]
+    await eachItem(db, undo.created || [], errors, async (row) => {
+      const { rows } = await db.query(
+        `SELECT ${EVENT_FIELDS}, created_at FROM events WHERE id = $1 AND plan_id = $2 FOR UPDATE`,
+        [row.id, planId]
       );
-      done += rowCount;
-    }
+      const current = rows[0];
+      // schon gelöscht oder ID inzwischen für ein anderes Event vergeben: nichts zu tun
+      if (!current || new Date(current.created_at).getTime() !== new Date(row.created_at).getTime()) return;
+      if (!sameEvent(current, row)) {
+        throw new PlanningError(`Event ${row.id} (${formatDate(current.date)}) wurde seither geändert.`);
+      }
+      await db.query("DELETE FROM events WHERE id = $1", [row.id]);
+      done++;
+    });
     await eachItem(db, undo.deleted || [], errors, async (row) => {
       const label = `Event ${row.id} (${formatDate(row.date)}): `;
       const { rows } = await db.query("SELECT 1 FROM events WHERE id = $1", [row.id]);
@@ -888,10 +955,14 @@ async function undoChange(planId, undo) {
       }
       done++;
     });
+    const afterById = new Map((undo.updated_after || []).map((r) => [r.id, r]));
     await eachItem(db, undo.updated || [], errors, async (row) => {
       const label = `Event ${row.id}: `;
-      const { rows } = await db.query("SELECT 1 FROM events WHERE id = $1 AND plan_id = $2 FOR UPDATE", [row.id, planId]);
+      const { rows } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE id = $1 AND plan_id = $2 FOR UPDATE`, [row.id, planId]);
       if (!rows.length) throw new PlanningError(`${label}wurde inzwischen gelöscht.`);
+      if (afterById.has(row.id) && !sameEvent(rows[0], afterById.get(row.id))) {
+        throw new PlanningError(`${label}wurde seither geändert.`);
+      }
       await assertFree(db, planId, row, row.id, label);
       try {
         await db.query(
@@ -922,6 +993,6 @@ async function describeEvents(list) {
 
 module.exports = {
   TYPE_FIELDS, EVENT_FIELDS, PlanningError,
-  loadType, assertFree, assertArea, assertCapacity, assertRules, ruleStatus, diagnoseRule, formatDate, clock, timeArg, minutesOf,
+  loadType, assertFree, assertArea, assertAvailable, assertCapacity, assertRules, ruleStatus, diagnoseRule, formatDate, clock, timeArg, minutesOf,
   overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, autoFill, undoChange, describeEvents,
 };

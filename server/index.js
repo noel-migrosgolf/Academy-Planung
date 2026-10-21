@@ -1,4 +1,5 @@
 const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
 const { pool, migrate } = require("./db");
 const auth = require("./auth");
@@ -221,14 +222,44 @@ api.put("/event-types/:id", auth.requireDataAdmin, (req, res) =>
     }
     const t = eventsData.normalizeType(body);
     const cols = eventsData.TYPE_COLUMNS;
-    const result = await pool.query(
-      `UPDATE event_types SET ${cols.map((c, i) => `${c} = $${i + 1}`).join(", ")}
-        WHERE id = $${cols.length + 1} RETURNING ${TYPE_FIELDS}`,
-      [...eventsData.typeValues(t), typeId]
-    );
-    // Bereits geplante Events übernehmen eine geänderte feste Zeit bzw. Brutto-Dauer.
-    if (result.rows[0]) await pool.query(eventsData.SYNC_FIXED_EVENTS_SQL, [typeId]);
-    return result;
+    const db = await pool.connect();
+    try {
+      await db.query("BEGIN");
+      const result = await db.query(
+        `UPDATE event_types SET ${cols.map((c, i) => `${c} = $${i + 1}`).join(", ")}
+          WHERE id = $${cols.length + 1} RETURNING ${TYPE_FIELDS}`,
+        [...eventsData.typeValues(t), typeId]
+      );
+      // Bereits geplante Events übernehmen eine geänderte feste Zeit bzw. Brutto-Dauer –
+      // aber nur, wenn dadurch kein Pro doppelt gebucht wird (in keinem Plan).
+      if (result.rows[0]) {
+        await db.query(eventsData.SYNC_FIXED_EVENTS_SQL, [typeId]);
+        const { rows: clashes } = await db.query(
+          `SELECT p.name AS pro, to_char(a.date, 'DD.MM.YYYY') AS datum, pl.name AS plan
+             FROM events a
+             JOIN events b ON b.plan_id = a.plan_id AND b.pro_id = a.pro_id AND b.date = a.date AND b.id <> a.id
+                          AND a.start_min < b.end_min AND b.start_min < a.end_min
+             JOIN pros p ON p.id = a.pro_id
+             JOIN plans pl ON pl.id = a.plan_id
+            WHERE a.type_id = $1
+            GROUP BY p.name, a.date, pl.name ORDER BY a.date LIMIT 4`,
+          [typeId]
+        );
+        if (clashes.length) {
+          const list = clashes.map((c) => `${c.pro} am ${c.datum} (Plan «${c.plan}»)`).join(", ");
+          throw new eventsData.ValidationError(
+            `Die neue Zeit würde bestehende Termine überschneiden: ${list}${clashes.length === 4 ? " …" : ""}. Bitte zuerst diese Termine verschieben.`
+          );
+        }
+      }
+      await db.query("COMMIT");
+      return result;
+    } catch (err) {
+      await db.query("ROLLBACK");
+      throw err;
+    } finally {
+      db.release();
+    }
   })
 );
 
@@ -280,6 +311,7 @@ api.post("/events", ...edit, versioned(async (req, b) => `Geplant: ${await descr
     const type = await loadType(db, eventsData.id(req.body.type_id, "Event-Typ"));
     const planned = eventsData.planNew(type, req.body);
     await planning.assertArea(db, type, planned.map((ev) => ev.pro_id));
+    await planning.assertAvailable(db, planned);
     const planId = req.plan.id;
     await planning.assertCapacity(db, planId, type, planned.reduce((sum, ev) => sum + planning.minutesOf(ev, type, "brutto"), 0));
     await planning.assertRules(db, planId, type, planned);
@@ -307,6 +339,7 @@ api.put("/events/:id", ...edit, versioned(async (req, b) => `Geändert: ${await 
     const type = await loadType(db, typeId);
     const ev = eventsData.planUpdate(rows[0], type, req.body);
     await planning.assertArea(db, type, [ev.pro_id]);
+    await planning.assertAvailable(db, [ev]);
     const before = type.id === rows[0].type_id ? planning.minutesOf(rows[0], type, "brutto") : 0;
     await planning.assertCapacity(db, planId, type, planning.minutesOf(ev, type, "brutto") - before);
     await planning.assertRules(db, planId, type, [ev], type.id === rows[0].type_id ? [rows[0]] : []);
@@ -330,12 +363,42 @@ api.delete("/events/:id", ...edit, versioned(async (req, b) => (b.deleted.length
         [eventId, req.plan.id]
       )
     : await pool.query(`DELETE FROM events WHERE id = $1 AND plan_id = $2 RETURNING ${EVENT_FIELDS}`, [eventId, req.plan.id]);
-  res.json({ deleted: rows });
+  const undoToken = rows.length ? offerUndo(req, { deleted: rows }, `Gelöscht: ${await describeEvents(rows)}`) : null;
+  res.json({ deleted: rows, undo_token: undoToken });
+});
+
+// --- Rückgängig für die Meldung «Rückgängig» (Löschen, Auslasten) ---
+// Die betroffenen Termine bleiben 15 Minuten auf dem Server; zurückgenommen wird mit derselben
+// konfliktsicheren Logik wie bei der KI (planning.undoChange).
+const UNDO_TTL_MS = 15 * 60 * 1000;
+const undoStore = new Map(); // Schlüssel → { planId, sessionKey, undo, text, expires }
+const sessionKey = (session) => (session.id ? `user:${session.id}` : session.role);
+
+function offerUndo(req, undo, text) {
+  const now = Date.now();
+  for (const [key, entry] of undoStore) if (entry.expires < now) undoStore.delete(key);
+  const token = crypto.randomUUID();
+  undoStore.set(token, { planId: req.plan.id, sessionKey: sessionKey(req.session), undo, text, expires: now + UNDO_TTL_MS });
+  return token;
+}
+
+api.post("/undo/:token", ...edit, async (req, res) => {
+  const entry = undoStore.get(req.params.token);
+  if (!entry || entry.expires < Date.now() || entry.planId !== req.plan.id || entry.sessionKey !== sessionKey(req.session)) {
+    return res.status(404).json({ error: "Rückgängig ist nicht mehr möglich." });
+  }
+  const result = await planning.undoChange(entry.planId, entry.undo);
+  if (result.errors.length) {
+    return res.status(409).json({ error: `Rückgängig nicht möglich, nichts geändert: ${result.errors.map((e) => e.fehler).join(" ")}` });
+  }
+  undoStore.delete(req.params.token);
+  await history.record(entry.planId, req.session.name, `Rückgängig: ${entry.text}`);
+  res.json({ ok: true, done: result.done });
 });
 
 // --- Lesefreundliche Übersicht und Sammel-Aktionen (für API und KI) ---
 
-const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
+const isDate = (v) => eventsData.validDate(String(v || ""));
 
 // ?from=YYYY-MM-DD&to=YYYY-MM-DD&pro=Name|Kürzel&format=text
 api.get("/overview", ...view, async (req, res) => {
@@ -464,6 +527,7 @@ api.post("/autofill", ...edit,
         summary: r.summary,
         regeln: r.regeln,
         created: dryRun ? [] : r.created.map((e) => e.id),
+        undo_token: dryRun || !r.created.length ? null : offerUndo(req, { created: r.created }, `Auslasten (${r.created.length} Termine)`),
       });
     } catch (err) {
       if (err instanceof planning.PlanningError) return res.status(400).json({ error: err.message });

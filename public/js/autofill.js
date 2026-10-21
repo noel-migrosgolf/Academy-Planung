@@ -123,7 +123,7 @@
         ? `Vorschau: ${r.count} Termine würden geplant (noch nichts gespeichert).`
         : `${r.count} Termine geplant.`;
       if (!dryRun) {
-        ctx.toast(`${r.count} Termine geplant`, r.count ? { label: "Rückgängig", run: () => undo(r.created) } : undefined);
+        ctx.toast(`${r.count} Termine geplant`, r.count ? { label: "Rückgängig", run: () => undo(r.undo_token) } : undefined);
         await ctx.reload();
       }
     } catch (err) {
@@ -154,9 +154,9 @@
     }
   }
 
-  async function undo(ids) {
+  async function undo(token) {
     try {
-      await ctx.api("/events/bulk-delete", { method: "POST", body: { ids } });
+      await ctx.api(`/undo/${token}`, { method: "POST" });
       results = new Map();
       renderRuleResults([]);
       $("#af-note").textContent = "Auslasten rückgängig gemacht.";

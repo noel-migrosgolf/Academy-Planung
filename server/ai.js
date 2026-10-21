@@ -295,14 +295,14 @@ async function runTool(ctx, name, input) {
       const r = await change(ctx,
         async (r) => `KI plant: ${await planning.describeEvents(r.created)}`,
         () => planning.bulkCreate(planId, input.events, { dryRun, userId: ctx.session.id || null }),
-        (r) => ({ created: r.created.map((e) => ({ id: e.id, created_at: e.created_at })) }));
+        (r) => ({ created: r.created }));
       return resultText(r, r.dryRun ? "anlegen" : "angelegt", r.created);
     }
     case "events_aendern": {
       const r = await change(ctx,
         async (r) => `KI ändert: ${await planning.describeEvents(r.updated)}`,
         () => planning.bulkUpdate(planId, input.aenderungen, { dryRun }),
-        (r) => ({ updated: r.previous }));
+        (r) => ({ updated: r.previous, updated_after: r.updated }));
       return resultText(r, r.dryRun ? "ändern" : "geändert", r.updated);
     }
     case "events_loeschen": {
@@ -316,7 +316,7 @@ async function runTool(ctx, name, input) {
       const r = await change(ctx,
         async (r) => `KI lastet aus: ${r.summary.length} Pros auf ${input.ziel_prozent} % (${r.created.length} Termine)`,
         () => planning.autoFill(planId, input, { dryRun, userId: ctx.session.id || null }),
-        (r) => ({ created: r.created.map((e) => ({ id: e.id, created_at: e.created_at })) }));
+        (r) => ({ created: r.created }));
       const lines = r.summary.map((s) => s.hinweis && s.vorher_prozent === undefined
         ? `${s.pro}: ${s.hinweis}`
         : `${s.pro}: ${s.vorher_prozent}% → ${s.nachher_prozent}% (${Object.entries(s.serien).map(([t, n]) => `${t}×${n}`).join(", ") || "nichts neu"})${s.hinweis ? ` – ${s.hinweis}` : ""}`);

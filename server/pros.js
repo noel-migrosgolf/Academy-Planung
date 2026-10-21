@@ -1,5 +1,7 @@
 // Einstellungen der Pros: Startdaten und Prüfung der Eingaben.
 
+const { validDate: isDate } = require("./events");
+
 const WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
 const AVAILABILITY_RULES = ["wochenend_wechsel_AB"];
 
@@ -21,9 +23,6 @@ const COLUMNS = [
 
 class ValidationError extends Error {}
 
-function isDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value));
-}
 
 function wholeNumber(value, label, max) {
   const n = Number(value);

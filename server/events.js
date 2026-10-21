@@ -68,8 +68,10 @@ const empty = (v) => v === null || v === undefined || v === "";
 
 // "HH:MM" oder Minuten seit Mitternacht → Minuten
 function minutes(value, label) {
-  if (typeof value === "string" && /^\d{1,2}:\d{2}$/.test(value)) {
-    const [h, m] = value.split(":").map(Number);
+  if (typeof value === "string" && /^\d{1,2}:\d{2}$/.test(value.trim())) {
+    const [h, m] = value.trim().split(":").map(Number);
+    // Keine Umrechnung ungültiger Zeiten (z. B. 09:90); 24:00 ist als Ende erlaubt.
+    if (m > 59 || h > 24 || (h === 24 && m > 0)) throw new ValidationError(`${label}: «${value}» ist keine gültige Uhrzeit.`);
     value = h * 60 + m;
   }
   const n = int(value, label, 0, 24 * 60);
@@ -137,8 +139,9 @@ function normalizeType(body) {
     if (t.series_offsets[i] < t.series_offsets[i - 1] || (same && !t.series_times)) {
       throw new ValidationError("Die Abstände der Termine müssen aufsteigend sein (gleicher Tag nur mit eigener Zeit je Termin).");
     }
-    if (same && t.series_times[i][0] < t.series_times[i - 1][1]) {
-      throw new ValidationError(`Termin ${i + 1} liegt am selben Tag wie Termin ${i} und muss danach beginnen.`);
+    // Der Pro ist bis zum Ende inkl. Puffer belegt (pauschal: Beginn + Brutto-Stunden)
+    if (same && t.series_times[i][0] < bookedEnd(t, ...t.series_times[i - 1])) {
+      throw new ValidationError(`Termin ${i + 1} liegt am selben Tag wie Termin ${i} und muss nach dessen Ende inkl. Puffer beginnen.`);
     }
   }
   return t;
@@ -178,10 +181,17 @@ function weekdayOf(iso) {
   return (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7; // Mo = 0
 }
 
+// Gibt es das Datum wirklich? (Date.parse akzeptiert z. B. 2027-02-30 und rechnet es in den März um.)
+function validDate(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const d = new Date(`${date}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === date;
+}
+
 function isoDate(value, label) {
   const date = String(value || "");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
-    throw new ValidationError(label ? `${label}: bitte ein gültiges Datum angeben.` : "Bitte ein gültiges Datum angeben.");
+  if (!validDate(date)) {
+    throw new ValidationError(label ? `${label}: «${date}» ist kein gültiges Datum.` : `«${date}» ist kein gültiges Datum.`);
   }
   return date;
 }
@@ -285,5 +295,5 @@ function planUpdate(existing, type, body) {
 
 module.exports = {
   SEED_TYPES, SEED_SERIES_TYPES, TYPE_COLUMNS, WEEKDAYS, AREAS, ValidationError,
-  normalizeType, typeValues, planNew, planUpdate, id, addDays, weekdayOf, assertWindow, SYNC_FIXED_EVENTS_SQL,
+  normalizeType, typeValues, planNew, planUpdate, id, addDays, weekdayOf, assertWindow, validDate, SYNC_FIXED_EVENTS_SQL,
 };
