@@ -10,12 +10,25 @@
   const dlgAdminLogin = $("#dlg-admin-login");
   const dlgUsers = $("#dlg-users");
 
+  let session = null;
+
+  async function api(path, { method = "GET", body } = {}) {
+    const res = await fetch(`/api${path}`, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: "same-origin",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Unbekannter Fehler.");
+    return data;
+  }
+
   function showError(form, message) {
     form.querySelector(".form-error").textContent = message || "";
   }
 
   function render() {
-    const session = Auth.getSession();
     views.login.hidden = !!session;
     views.calendar.hidden = !session;
     btnLogout.hidden = !session;
@@ -30,13 +43,13 @@
     }
   }
 
-  function renderUsers() {
-    const users = Auth.getUsers();
+  async function renderUsers() {
+    const { users } = await api("/users");
     const tbody = $("#user-list");
     tbody.replaceChildren();
     for (const user of users) {
       const tr = document.createElement("tr");
-      const created = new Date(user.createdAt).toLocaleDateString("de-CH");
+      const created = new Date(user.created_at).toLocaleDateString("de-CH");
       for (const value of [user.name, user.username, created]) {
         const td = document.createElement("td");
         td.textContent = value;
@@ -46,9 +59,9 @@
       const del = document.createElement("button");
       del.className = "btn btn-danger btn-sm";
       del.textContent = "Löschen";
-      del.addEventListener("click", () => {
+      del.addEventListener("click", async () => {
         if (confirm(`Benutzer «${user.username}» wirklich löschen?`)) {
-          Auth.deleteUser(user.username);
+          await api(`/users/${user.id}`, { method: "DELETE" });
           renderUsers();
         }
       });
@@ -60,9 +73,14 @@
     $(".user-table").hidden = users.length === 0;
   }
 
-  function openUsers() {
-    renderUsers();
+  async function openUsers() {
+    showError($("#user-form"));
     dlgUsers.showModal();
+    try {
+      await renderUsers();
+    } catch (err) {
+      showError($("#user-form"), err.message);
+    }
   }
 
   // Login
@@ -70,7 +88,10 @@
     e.preventDefault();
     const form = e.currentTarget;
     try {
-      await Auth.login(form.username.value, form.password.value);
+      ({ user: session } = await api("/login", {
+        method: "POST",
+        body: { username: form.username.value, password: form.password.value },
+      }));
       form.reset();
       showError(form);
       render();
@@ -91,7 +112,10 @@
     e.preventDefault();
     const form = e.currentTarget;
     try {
-      await Auth.adminLogin(form.password.value);
+      ({ user: session } = await api("/admin/login", {
+        method: "POST",
+        body: { password: form.password.value },
+      }));
       dlgAdminLogin.close();
       render();
       openUsers();
@@ -106,10 +130,13 @@
     e.preventDefault();
     const form = e.currentTarget;
     try {
-      await Auth.createUser({
-        name: form.elements.name.value,
-        username: form.username.value,
-        password: form.password.value,
+      await api("/users", {
+        method: "POST",
+        body: {
+          name: form.elements.name.value,
+          username: form.username.value,
+          password: form.password.value,
+        },
       });
       form.reset();
       showError(form);
@@ -119,8 +146,9 @@
     }
   });
 
-  btnLogout.addEventListener("click", () => {
-    Auth.logout();
+  btnLogout.addEventListener("click", async () => {
+    await api("/logout", { method: "POST" }).catch(() => {});
+    session = null;
     render();
   });
 
@@ -128,5 +156,8 @@
     btn.addEventListener("click", () => btn.closest("dialog").close())
   );
 
-  render();
+  api("/me")
+    .then((data) => (session = data.user))
+    .catch(() => (session = null))
+    .finally(render);
 })();

@@ -1,0 +1,26 @@
+# Render Blueprint: legt Web Service und Datenbank automatisch an.
+# In Render: New → Blueprint → dieses Repository wählen.
+services:
+  - type: web
+    name: academy-planung
+    runtime: node
+    region: frankfurt
+    plan: starter
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: academy-planung-db
+          property: connectionString
+      - key: ADMIN_PASSWORD
+        sync: false # wird beim Anlegen in Render abgefragt
+
+databases:
+  - name: academy-planung-db
+    databaseName: academy
+    region: frankfurt
+    plan: basic-256mb
