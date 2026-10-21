@@ -13,6 +13,8 @@ const pool = new Pool({
 
 // Schema wird beim Start angelegt bzw. ergänzt.
 async function migrate() {
+  const { rows: existing } = await pool.query("SELECT to_regclass('pros') IS NOT NULL AS has_pros");
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id            SERIAL PRIMARY KEY,
@@ -28,8 +30,23 @@ async function migrate() {
       role       TEXT NOT NULL CHECK (role IN ('user', 'admin')),
       expires_at TIMESTAMPTZ NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS pros (
+      id         SERIAL PRIMARY KEY,
+      name       TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
   await pool.query("DELETE FROM sessions WHERE expires_at < now()");
+
+  // Start-Pros nur beim erstmaligen Anlegen der Tabelle einfügen.
+  if (!existing[0].has_pros) {
+    const names = ["Thore", "Yannick", "Anja", "Benedikt", "Aaron", "Joseph", "Leigh"];
+    for (const [i, name] of names.entries()) {
+      await pool.query("INSERT INTO pros (name, sort_order) VALUES ($1, $2)", [name, i + 1]);
+    }
+  }
 }
 
 module.exports = { pool, migrate };

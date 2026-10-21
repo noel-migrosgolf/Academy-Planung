@@ -37,5 +37,7 @@ Build Command `npm ci` und Start Command `npm start`.
 ## Aktueller Stand
 
 - **Login** für Benutzer (Passwörter als scrypt-Hash in der Datenbank).
-- **Admin-Bereich** (oben rechts): Benutzer anlegen und löschen.
-- **Jahreskalender 2027** mit den Schulferien und schulfreien Tagen des Kantons Zug (`public/js/ferien.js`).
+- **Kalender** (`public/js/planner.js`): Einsatzkalender der Pros mit den Ansichten Tag, Woche, Monat und Saison, Navigation per Datum und KW sowie Filter nach Pros. Noch ohne Einsätze.
+- **Pros**: Übersicht aller Pros; Admins können Pros hinzufügen und entfernen.
+- **Schulferien** (`public/js/calendar.js`): Jahresübersicht 2027 mit den Schulferien und schulfreien Tagen des Kantons Zug (`public/js/ferien.js`).
+- **Benutzer** (nur Admin): Benutzer anlegen und löschen.

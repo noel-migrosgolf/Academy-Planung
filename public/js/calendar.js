@@ -1,55 +1,6 @@
-// Jahreskalender mit Schulferien.
+// Jahresübersicht der Schulferien.
 (function () {
-  const MONTHS = [
-    "Januar", "Februar", "März", "April", "Mai", "Juni",
-    "Juli", "August", "September", "Oktober", "November", "Dezember",
-  ];
-  const WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-
-  function parseDate(iso) {
-    const [y, m, d] = iso.split("-").map(Number);
-    return new Date(y, m - 1, d);
-  }
-
-  function isoKey(date) {
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const d = String(date.getDate()).padStart(2, "0");
-    return `${date.getFullYear()}-${m}-${d}`;
-  }
-
-  function formatDate(iso) {
-    return parseDate(iso).toLocaleDateString("de-CH", {
-      weekday: "short", day: "2-digit", month: "2-digit", year: "numeric",
-    });
-  }
-
-  // ISO-8601 Kalenderwoche
-  function isoWeek(date) {
-    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-    const day = d.getUTCDay() || 7;
-    d.setUTCDate(d.getUTCDate() + 4 - day);
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    return Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
-  }
-
-  // Map von "YYYY-MM-DD" auf den Ferieneintrag
-  function buildHolidayIndex(entries) {
-    const index = {};
-    for (const entry of entries) {
-      const end = parseDate(entry.end);
-      for (let d = parseDate(entry.start); d <= end; d.setDate(d.getDate() + 1)) {
-        index[isoKey(d)] = entry;
-      }
-    }
-    return index;
-  }
-
-  function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-  }
+  const { MONTHS, WEEKDAYS, parseDate, isoKey, formatDate, isoWeek, buildHolidayIndex, el } = window.Dates;
 
   function renderMonth(year, month, holidays, todayKey) {
     const card = el("section", "card month");
@@ -129,5 +80,5 @@
     legendContainer.replaceChildren(renderLegend(year, entries));
   }
 
-  window.Calendar = { render };
+  window.HolidayCalendar = { render };
 })();

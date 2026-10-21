@@ -8,10 +8,18 @@
   const btnAdmin = $("#btn-admin");
   const btnLogout = $("#btn-logout");
   const dlgAdminLogin = $("#dlg-admin-login");
-  const pages = { calendar: $("#page-calendar"), users: $("#page-users") };
+  const pages = {
+    calendar: $("#page-calendar"),
+    pros: $("#page-pros"),
+    ferien: $("#page-ferien"),
+    users: $("#page-users"),
+  };
 
   let session = null;
   let currentPage = "calendar";
+  let pros = [];
+
+  Planner.init(pages.calendar);
 
   async function api(path, { method = "GET", body } = {}) {
     const res = await fetch(`/api${path}`, {
@@ -59,9 +67,11 @@
     currentPage = name;
     for (const [key, el] of Object.entries(pages)) el.hidden = key !== name;
     $$(".nav button[data-page]").forEach((b) => b.classList.toggle("on", b.dataset.page === name));
-    if (name === "calendar") {
+    if (name === "calendar") Planner.render();
+    if (name === "pros") renderPros();
+    if (name === "ferien") {
       $("#cal-year").textContent = YEAR;
-      Calendar.render($("#calendar"), $("#legend"), YEAR, window.FERIEN_ZUG);
+      HolidayCalendar.render($("#calendar"), $("#legend"), YEAR, window.FERIEN_ZUG);
     }
     if (name === "users") loadUsers();
   }
@@ -80,8 +90,69 @@
       $("#session-name").textContent = session.name;
       $("#session-avatar").textContent = initials(session.name);
       showPage(currentPage);
+      loadPros();
     } else {
       for (const el of Object.values(pages)) el.hidden = true;
+    }
+  }
+
+  async function loadPros() {
+    try {
+      ({ pros } = await api("/pros"));
+    } catch (err) {
+      toast(err.message);
+      return;
+    }
+    Planner.setPros(pros);
+    if (currentPage === "pros") renderPros();
+  }
+
+  function renderPros() {
+    const list = $("#pro-list");
+    list.replaceChildren();
+    for (const pro of pros) {
+      const card = document.createElement("div");
+      card.className = "card pro";
+      card.tabIndex = 0;
+      card.title = `Kalender für ${pro.name} anzeigen`;
+      const name = document.createElement("div");
+      name.className = "nm";
+      name.textContent = pro.name;
+      card.appendChild(name);
+
+      const open = () => {
+        Planner.showOnly(pro.id);
+        showPage("calendar");
+      };
+      card.addEventListener("click", open);
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") open();
+      });
+
+      if (session?.role === "admin") {
+        const del = document.createElement("button");
+        del.className = "btn sm danger";
+        del.textContent = "Entfernen";
+        del.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (!confirm(`Pro «${pro.name}» wirklich entfernen?`)) return;
+          try {
+            await api(`/pros/${pro.id}`, { method: "DELETE" });
+            toast(`Pro «${pro.name}» entfernt`);
+            loadPros();
+          } catch (err) {
+            toast(err.message);
+          }
+        });
+        card.appendChild(del);
+      }
+      list.appendChild(card);
+    }
+    if (!pros.length) {
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "Noch keine Pros erfasst.";
+      list.appendChild(empty);
     }
   }
 
@@ -189,6 +260,20 @@
       showError(form);
       toast(`Benutzer «${user.username}» angelegt`);
       loadUsers();
+    } catch (err) {
+      showError(form, err.message);
+    }
+  });
+
+  $("#pro-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    try {
+      const { pro } = await api("/pros", { method: "POST", body: { name: form.elements.name.value } });
+      form.reset();
+      showError(form);
+      toast(`Pro «${pro.name}» hinzugefügt`);
+      loadPros();
     } catch (err) {
       showError(form, err.message);
     }

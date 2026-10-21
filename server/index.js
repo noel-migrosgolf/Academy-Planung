@@ -86,6 +86,28 @@ api.delete("/users/:id", auth.requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+api.get("/pros", auth.requireLogin, async (req, res) => {
+  const { rows } = await pool.query("SELECT id, name FROM pros ORDER BY sort_order, id");
+  res.json({ pros: rows });
+});
+
+api.post("/pros", auth.requireAdmin, async (req, res) => {
+  const name = String(req.body.name || "").trim();
+  if (!name) return res.status(400).json({ error: "Bitte einen Namen eingeben." });
+  const { rows } = await pool.query(
+    `INSERT INTO pros (name, sort_order)
+     VALUES ($1, (SELECT coalesce(max(sort_order), 0) + 1 FROM pros))
+     RETURNING id, name`,
+    [name]
+  );
+  res.status(201).json({ pro: rows[0] });
+});
+
+api.delete("/pros/:id", auth.requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM pros WHERE id = $1", [Number(req.params.id)]);
+  res.json({ ok: true });
+});
+
 app.use("/api", api);
 app.use("/api", (req, res) => res.status(404).json({ error: "Nicht gefunden." }));
 app.use(express.static(path.join(__dirname, "..", "public")));
