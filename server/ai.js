@@ -300,7 +300,14 @@ function addUsage(total, usage, model) {
   return u;
 }
 
-function request(system, messages) {
+// Wird das Ausweichmodell (Beta) vom Konto abgelehnt, läuft die KI ohne es weiter.
+let fallbacksRejected = false;
+
+function apiMessage(err) {
+  return err.error?.error?.message || err.message || "";
+}
+
+async function request(system, messages) {
   const params = {
     model: MODEL,
     max_tokens: 16000,
@@ -311,11 +318,20 @@ function request(system, messages) {
     cache_control: { type: "ephemeral" },
   };
   // Lehnt das Modell eine Anfrage aus Sicherheitsgründen ab, übernimmt serverseitig ein Ausweichmodell.
-  if (process.env.AI_FALLBACKS !== "off" && !/haiku/.test(MODEL)) {
-    params.betas = ["server-side-fallback-2026-07-01"];
-    params.fallbacks = "default";
+  if (process.env.AI_FALLBACKS !== "off" && !/haiku/.test(MODEL) && !fallbacksRejected) {
+    try {
+      return await anthropic().beta.messages.create({
+        ...params,
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+      });
+    } catch (err) {
+      if (!(err instanceof Anthropic.APIError) || err.status !== 400 || !/fallback/i.test(apiMessage(err))) throw err;
+      console.error("KI: Anfrage mit Ausweichmodell abgelehnt, weiter ohne:", apiMessage(err));
+      fallbacksRejected = true;
+    }
   }
-  return anthropic().beta.messages.create(params);
+  return anthropic().messages.create(params);
 }
 
 // Hängt eine Benutzer-Nachricht an; folgt sie direkt auf eine Benutzer-Nachricht
@@ -374,13 +390,13 @@ async function converse(chat, session, text) {
     if (err.userMessage) {
       ctx.items.push({ type: "error", text: err.userMessage });
     } else if (err instanceof Anthropic.APIError) {
-      console.error("KI-Anfrage fehlgeschlagen:", err.status, err.message);
+      console.error("KI-Anfrage fehlgeschlagen:", err.status, apiMessage(err));
       const busy = err.status === 429 || err.status === 529 || err.status >= 500;
       ctx.items.push({
         type: "error",
         text: err.status === 401 ? "Der KI-Schlüssel (ANTHROPIC_API_KEY) ist ungültig."
           : busy ? "Die KI ist gerade ausgelastet. Bitte gleich nochmals versuchen."
-          : `Die KI-Anfrage ist fehlgeschlagen (${err.status ?? "Netzwerk"}).`,
+          : `Die KI-Anfrage ist fehlgeschlagen (${err.status ?? "Netzwerk"}): ${apiMessage(err)}`,
       });
     } else {
       throw err;
