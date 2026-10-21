@@ -328,11 +328,18 @@
       <!-- Regeln -->
       <section id="page-regeln" class="page" hidden>
         <h1>Regeln</h1>
-        <p class="lead">Regeln legen fest, wie viele Sollstunden (brutto, über alle Pros zusammen) eines Kurses in einem Zeitraum stattfinden müssen. «Genau» und «höchstens» sperren das Einplanen darüber hinaus; fehlende Stunden füllt der Reiter «Auslasten» auf.</p>
+        <p class="lead">Regeln legen fest, wie viele Sollstunden (brutto, über alle Pros zusammen) eines Kurses in einem Zeitraum stattfinden müssen, oder welcher Anteil der Sollstunden von Kursen an bestimmten Wochentagen liegen muss. «Genau» und «höchstens» sperren das Einplanen darüber hinaus; fehlende Stunden füllt der Reiter «Auslasten» auf, und er hält die Wochentag-Anteile ein.</p>
         <div class="card stack" id="rule-form-card" hidden>
-          <div class="hd"><h3 id="rule-form-title">Neue Regel</h3></div>
+          <div class="hd">
+            <h3 id="rule-form-title">Neue Regel</h3>
+            <span class="spacer"></span>
+            <div class="seg" role="tablist" aria-label="Regelart" id="rule-kind">
+              <button type="button" data-art="stunden" class="on">Stunden im Zeitraum</button>
+              <button type="button" data-art="wochentage">Anteil nach Wochentag</button>
+            </div>
+          </div>
           <form class="bd rule-form" id="rule-form" novalidate>
-            <div class="rule-sentence">
+            <div class="rule-sentence" id="rule-s-stunden">
               <span>Zwischen</span>
               <input type="date" name="von" value="2027-01-01" min="2027-01-01" max="2027-12-31">
               <span>und</span>
@@ -347,6 +354,26 @@
               <input type="number" name="stunden" min="0" step="0.5" placeholder="z. B. 30" class="rule-num">
               <span>Sollstunden von</span>
               <select name="type_id" class="fsel"></select>
+              <span>stattfinden.</span>
+            </div>
+            <div class="rule-sentence rule-share" id="rule-s-wochentage" hidden>
+              <span>Mindestens</span>
+              <input type="number" name="prozent" min="0" max="100" step="5" placeholder="z. B. 60" class="rule-num">
+              <span>% der Sollstunden von</span>
+              <div class="chips" id="rule-types"></div>
+              <span>müssen</span>
+              <div class="chips" id="rule-days">
+                <button type="button" class="chip" data-preset="0,1,2,3,4">Wochentage</button>
+                <button type="button" class="chip" data-preset="5,6">Wochenende</button>
+                <span class="rule-sep"></span>
+                <button type="button" class="chip" data-day="0">Mo</button>
+                <button type="button" class="chip" data-day="1">Di</button>
+                <button type="button" class="chip" data-day="2">Mi</button>
+                <button type="button" class="chip" data-day="3">Do</button>
+                <button type="button" class="chip" data-day="4">Fr</button>
+                <button type="button" class="chip" data-day="5">Sa</button>
+                <button type="button" class="chip" data-day="6">So</button>
+              </div>
               <span>stattfinden.</span>
             </div>
             <p class="form-error" role="alert"></p>

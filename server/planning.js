@@ -149,7 +149,11 @@ async function overview({ from, to, pro } = {}, db = pool) {
 
   const regeln = (await ruleStatus(db)).filter((r) => r.aktiv);
   return {
-    regeln: regeln.map((r) => ({ regel: r.text, ist_stunden: r.ist_stunden, erfuellt: r.erfuellt })),
+    regeln: regeln.map((r) => ({
+      regel: r.text,
+      ist: r.art === "wochentage" ? (r.ist_prozent === null ? "noch nichts geplant" : `${r.ist_prozent} %`) : `${r.ist_stunden} h`,
+      erfuellt: r.erfuellt,
+    })),
     pros: lk.pros.map((p) => {
       const sum = planned.get(p.id) || { brutto: 0, netto: 0 };
       return {
@@ -198,8 +202,8 @@ async function overview({ from, to, pro } = {}, db = pool) {
 function overviewText(o, { maxEvents = 400, parts = ["regeln", "pros", "typen", "events"] } = {}) {
   const lines = [];
   if (parts.includes("regeln") && o.regeln.length) {
-    lines.push("REGELN (Regel|ist h|erfüllt)");
-    for (const r of o.regeln) lines.push([r.regel, r.ist_stunden, r.erfuellt ? "ja" : "nein"].join("|"));
+    lines.push("REGELN (Regel|ist|erfüllt)");
+    for (const r of o.regeln) lines.push([r.regel, r.ist, r.erfuellt ? "ja" : "nein"].join("|"));
   }
   if (parts.includes("pros")) {
     lines.push("PROS (Name|Kürzel|Soll h|geplant brutto h|netto h|Auslastung %|frei|Einsatz)");
@@ -371,17 +375,13 @@ function spreadOrder(n) {
 
 const WEEKDAY_INDEX = Object.fromEntries(eventsData.WEEKDAYS.map((d, i) => [d.toLowerCase(), i]));
 
-// Plant für jeden Pro Serien der gewählten Typen, bis die Ziel-Auslastung (brutto in % der Sollstunden,
-// gezählt wie in der Übersicht über alle Events) erreicht ist. Die Serien werden gleichmässig über den
-// Zeitraum verteilt; es gelten nur die Regeln des Tools (keine Überschneidung, Wochentag, feste Zeit),
-// auf Wunsch zusätzlich die freien Wochentage der Pros. Ganz oder gar nicht, eine Transaktion.
 // --- Regeln (server/rules.js) ---
 
 async function loadRules(db, { activeOnly = true } = {}) {
   const { rows } = await db.query(
-    `SELECT r.id, r.type_id, to_char(r.von, 'YYYY-MM-DD') AS von, to_char(r.bis, 'YYYY-MM-DD') AS bis,
-            r.operator, r.stunden, r.aktiv, r.notiz
-       FROM rules r ${activeOnly ? "WHERE r.aktiv" : ""} ORDER BY r.von, r.id`
+    `SELECT r.id, r.art, r.type_id, r.type_ids, to_char(r.von, 'YYYY-MM-DD') AS von, to_char(r.bis, 'YYYY-MM-DD') AS bis,
+            r.operator, r.stunden, r.prozent, r.wochentage, r.aktiv, r.notiz
+       FROM rules r ${activeOnly ? "WHERE r.aktiv" : ""} ORDER BY r.art, r.von, r.id`
   );
   return rows;
 }
@@ -400,14 +400,20 @@ async function ruleStatus(db = pool) {
   const lk = await lookups(db);
   const typeById = new Map(lk.types.map((t) => [t.id, t]));
   const list = [];
+  const nameOf = (id) => typeById.get(id)?.name;
   for (const rule of await loadRules(db, { activeOnly: false })) {
+    if (rule.art === "wochentage") {
+      const share = await shareOf(db, rule, typeById);
+      list.push({ ...rule, text: rulesData.describe(rule, nameOf), ...share });
+      continue;
+    }
     const type = typeById.get(rule.type_id);
     const ist = Math.round(((await ruleMinutes(db, rule, type)) / 60) * 100) / 100;
     list.push({
       ...rule,
       typ: type.name,
       typ_code: type.code,
-      text: rulesData.describe(rule, type.name),
+      text: rulesData.describe(rule, nameOf),
       ist_stunden: ist,
       erfuellt: rulesData.OPS[rule.operator].ok(ist, rule.stunden),
     });
@@ -415,10 +421,38 @@ async function ruleStatus(db = pool) {
   return list;
 }
 
+// Anteil der Brutto-Stunden der Regel-Kurse, die an den gewählten Wochentagen liegen.
+// Ohne geplante Stunden gilt die Regel als erfüllt.
+function shareResult(rule, onMinutes, totalMinutes) {
+  const ist = totalMinutes ? Math.round((onMinutes / totalMinutes) * 1000) / 10 : null;
+  return {
+    ist_prozent: ist,
+    stunden_an_tagen: Math.round((onMinutes / 60) * 10) / 10,
+    stunden_total: Math.round((totalMinutes / 60) * 10) / 10,
+    erfuellt: ist === null || ist >= rule.prozent - rulesData.EPS,
+  };
+}
+
+async function shareOf(db, rule, typeById) {
+  const { rows } = await db.query(
+    "SELECT type_id, to_char(date, 'YYYY-MM-DD') AS date, start_min, end_min FROM events WHERE type_id = ANY($1::int[])",
+    [rule.type_ids]
+  );
+  const days = new Set(rule.wochentage);
+  let on = 0;
+  let total = 0;
+  for (const ev of rows) {
+    const minutes = minutesOf(ev, typeById.get(ev.type_id), "brutto");
+    total += minutes;
+    if (days.has(eventsData.weekdayOf(ev.date))) on += minutes;
+  }
+  return shareResult(rule, on, total);
+}
+
 // Obergrenzen (genau, höchstens) dürfen durch neue Termine nicht überschritten werden.
 // added/removed: Events mit date, start_min, end_min (bei Änderungen der alte Stand in removed).
 async function assertRules(db, type, added, removed = [], label = "") {
-  const rules = (await loadRules(db)).filter((r) => r.type_id === type.id && rulesData.OPS[r.operator].upper);
+  const rules = (await loadRules(db)).filter((r) => r.art === "stunden" && r.type_id === type.id && rulesData.OPS[r.operator].upper);
   for (const rule of rules) {
     const inWindow = (list) => list.filter((ev) => ev.date >= rule.von && ev.date <= rule.bis)
       .reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
@@ -427,12 +461,17 @@ async function assertRules(db, type, added, removed = [], label = "") {
     const now = await ruleMinutes(db, rule, type);
     if ((now + delta) / 60 > rule.stunden + rulesData.EPS) {
       throw new eventsData.ValidationError(
-        `${label}Regel verletzt: «${rulesData.describe(rule, type.name)}» – bereits ${hoursText(now)} geplant, dazu kämen ${hoursText(delta)}.`
+        `${label}Regel verletzt: «${rulesData.describe(rule, () => type.name)}» – bereits ${hoursText(now)} geplant, dazu kämen ${hoursText(delta)}.`
       );
     }
   }
 }
 
+// Plant für jeden Pro Serien der gewählten Typen, bis die Ziel-Auslastung (brutto in % der Sollstunden,
+// gezählt wie in der Übersicht über alle Events) erreicht ist. Die Serien werden gleichmässig über den
+// Zeitraum verteilt; es gelten die Regeln des Tools (keine Überschneidung, Wochentag, feste Zeit, Einsatzbereich,
+// Typ-Maximum) und die aktiven Regeln, auf Wunsch zusätzlich die freien Wochentage der Pros.
+// Ganz oder gar nicht, eine Transaktion.
 // ziele: [{ pro, prozent }] = eigenes Ziel je Pro (statt ziel_prozent für alle bzw. die Liste pros).
 // regeln_erfuellen: zuerst die Untergrenzen der aktiven Regeln (mindestens, genau, mehr als) auffüllen,
 // verteilt auf passende Pros mit der geringsten Auslastung im Verhältnis zu ihrem Ziel.
@@ -498,7 +537,24 @@ async function autoFill(
       planned.set(ev.pro_id, (planned.get(ev.pro_id) || 0) + minutes);
       typeUsed.set(ev.type_id, (typeUsed.get(ev.type_id) || 0) + minutes);
     }
-    const rules = (await loadRules(db)).map((r) => ({ ...r, type: typeById.get(r.type_id) }));
+    const allRules = await loadRules(db);
+    const nameOf = (id) => typeById.get(id)?.name;
+    const rules = allRules.filter((r) => r.art === "stunden").map((r) => ({ ...r, type: typeById.get(r.type_id) }));
+    // Anteil-Regeln (Wochentage): Brutto-Minuten an den gewählten Tagen und insgesamt
+    const shareRules = allRules.filter((r) => r.art === "wochentage")
+      .map((r) => ({ ...r, ids: new Set(r.type_ids), days: new Set(r.wochentage), on: 0, total: 0 }));
+    const shareAdd = (rule, list) => {
+      let on = 0;
+      let total = 0;
+      for (const ev of list) {
+        if (!rule.ids.has(ev.type_id)) continue;
+        const minutes = minutesOf(ev, typeById.get(ev.type_id), "brutto");
+        total += minutes;
+        if (rule.days.has(eventsData.weekdayOf(ev.date))) on += minutes;
+      }
+      return { on, total };
+    };
+    for (const rule of shareRules) Object.assign(rule, shareAdd(rule, existing), { before: shareAdd(rule, existing) });
     const ruleUsed = new Map();
     const inRule = (rule, ev) => ev.type_id === rule.type_id && ev.date >= rule.von && ev.date <= rule.bis;
     for (const rule of rules) {
@@ -523,6 +579,13 @@ async function autoFill(
         const add = series.filter((ev) => inRule(rule, ev)).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
         if (add && (ruleUsed.get(rule.id) + add) / 60 > rule.stunden + rulesData.EPS) return false;
       }
+      // Termine an anderen Tagen nur, solange der Anteil an den gewählten Tagen nicht unter das Minimum fällt
+      for (const rule of shareRules) {
+        const add = shareAdd(rule, series);
+        if (add.on >= add.total) continue;
+        const total = rule.total + add.total;
+        if (total && ((rule.on + add.on) / total) * 100 < rule.prozent - rulesData.EPS) return false;
+      }
       return true;
     }
 
@@ -536,6 +599,11 @@ async function autoFill(
         for (const rule of rules) {
           if (inRule(rule, ev)) ruleUsed.set(rule.id, ruleUsed.get(rule.id) + minutesOf(ev, type, "brutto"));
         }
+      }
+      for (const rule of shareRules) {
+        const add = shareAdd(rule, series);
+        rule.on += add.on;
+        rule.total += add.total;
       }
       planned.set(pro.id, (planned.get(pro.id) || 0) + minutes);
       typeUsed.set(type.id, (typeUsed.get(type.id) || 0) + minutes);
@@ -611,15 +679,25 @@ async function autoFill(
       });
     }
 
-    const regeln = rules.map((rule) => {
-      const ist = Math.round((ruleUsed.get(rule.id) / 60) * 100) / 100;
-      return {
-        regel: rulesData.describe(rule, rule.type.name),
-        vorher_stunden: Math.round((rulesBefore.get(rule.id) / 60) * 100) / 100,
-        nachher_stunden: ist,
-        erfuellt: rulesData.OPS[rule.operator].ok(ist, rule.stunden),
-      };
-    });
+    const hoursOf = (min) => `${Math.round((min / 60) * 100) / 100} h`;
+    const percentOf = (r) => (r.total ? `${Math.round((r.on / r.total) * 1000) / 10} %` : "–");
+    const regeln = [
+      ...rules.map((rule) => {
+        const ist = Math.round((ruleUsed.get(rule.id) / 60) * 100) / 100;
+        return {
+          regel: rulesData.describe(rule, nameOf),
+          vorher: hoursOf(rulesBefore.get(rule.id)),
+          nachher: hoursOf(ruleUsed.get(rule.id)),
+          erfuellt: rulesData.OPS[rule.operator].ok(ist, rule.stunden),
+        };
+      }),
+      ...shareRules.map((rule) => ({
+        regel: rulesData.describe(rule, nameOf),
+        vorher: percentOf(rule.before),
+        nachher: percentOf(rule),
+        erfuellt: shareResult(rule, rule.on, rule.total).erfuellt,
+      })),
+    ];
 
     let created = [];
     if (toInsert.length) {

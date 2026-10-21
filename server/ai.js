@@ -65,7 +65,7 @@ Daten
 - Event-Typen: Brutto zählt gegen die Sollstunden, Netto ist Unterrichtszeit, der Puffer liegt am Ende. Ein Typ kann eine feste Zeit und einen festen Wochentag für den ersten Termin vorgeben. Serien-Typen legen mehrere Termine an (Abstände in Tagen ab dem ersten Termin); bei Serien sind pro Termin nur Pro und Notiz änderbar. Gib bei Serien mit «pros» pro Termin einen eigenen Pro an.
 - Ein Pro kann keine zwei überschneidenden Events haben.
 - Event-Typen können einen einplanbaren Zeitraum und ein Maximum an Sollstunden (brutto, über alle Pros zusammen) haben; daten_lesen zeigt beides.
-- Regeln (Reiter «Regeln») legen fest, wie viele Sollstunden eines Kurses in einem Zeitraum stattfinden müssen (mindestens, genau, mehr als, höchstens). daten_lesen zeigt sie mit Stand; Obergrenzen sperrt das Tool, Untergrenzen erfüllt auslasten mit regeln_erfuellen.
+- Regeln (Reiter «Regeln») legen fest, wie viele Sollstunden eines Kurses in einem Zeitraum stattfinden müssen (mindestens, genau, mehr als, höchstens) und welcher Anteil der Sollstunden von Kursen an bestimmten Wochentagen liegen muss. daten_lesen zeigt sie mit Stand. Obergrenzen sperrt das Tool, Untergrenzen erfüllt auslasten mit regeln_erfuellen, Wochentag-Anteile hält auslasten ein; beim Planen von Hand achtest du selbst darauf.
 - Jeder Event-Typ hat einen Einsatzbereich (Kurse, Bambini, GCE oder alle); nur Pros mit diesem Bereich dürfen ihn übernehmen. Die Bereiche der Pros stehen bei daten_lesen unter «Einsatz».
 
 Arbeitsweise
@@ -298,7 +298,7 @@ async function runTool(ctx, name, input) {
       const lines = r.summary.map((s) => s.hinweis && s.vorher_prozent === undefined
         ? `${s.pro}: ${s.hinweis}`
         : `${s.pro}: ${s.vorher_prozent}% → ${s.nachher_prozent}% (${Object.entries(s.serien).map(([t, n]) => `${t}×${n}`).join(", ") || "nichts neu"})${s.hinweis ? ` – ${s.hinweis}` : ""}`);
-      const ruleLines = (r.regeln || []).map((g) => `Regel ${g.erfuellt ? "erfüllt" : "NICHT erfüllt"}: ${g.regel} (${g.vorher_stunden} → ${g.nachher_stunden} h)`);
+      const ruleLines = (r.regeln || []).map((g) => `Regel ${g.erfuellt ? "erfüllt" : "NICHT erfüllt"}: ${g.regel} (${g.vorher} → ${g.nachher})`);
       return `${r.dryRun ? "Prüfung, nichts gespeichert" : `OK, ${r.created.length} Termine angelegt`}:\n${[...lines, ...ruleLines].join("\n")}`;
     }
     case "verlauf": {

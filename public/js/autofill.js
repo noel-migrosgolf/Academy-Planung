@@ -145,7 +145,7 @@
       const row = el("div", `rule-row ${g.erfuellt ? "ok" : "bad"}`);
       row.append(el("span", "rule-ic", g.erfuellt ? "✓" : "✗"));
       const main = el("div", "rule-main");
-      main.append(el("div", "rule-text", g.regel), el("div", "rule-meter tab", `${g.vorher_stunden} h → ${g.nachher_stunden} h`));
+      main.append(el("div", "rule-text", g.regel), el("div", "rule-meter tab", `${g.vorher} → ${g.nachher}`));
       row.append(main);
       box.append(row);
     }

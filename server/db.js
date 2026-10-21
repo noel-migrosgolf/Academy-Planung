@@ -44,6 +44,17 @@ async function migrate() {
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- Zweite Regelart «wochentage»: Anteil der Sollstunden von Kursen an bestimmten Wochentagen
+    ALTER TABLE rules
+      ADD COLUMN IF NOT EXISTS art        TEXT NOT NULL DEFAULT 'stunden',
+      ADD COLUMN IF NOT EXISTS type_ids   INTEGER[],
+      ADD COLUMN IF NOT EXISTS prozent    REAL,
+      ADD COLUMN IF NOT EXISTS wochentage INTEGER[],
+      ALTER COLUMN type_id  DROP NOT NULL,
+      ALTER COLUMN von      DROP NOT NULL,
+      ALTER COLUMN bis      DROP NOT NULL,
+      ALTER COLUMN operator DROP NOT NULL,
+      ALTER COLUMN stunden  DROP NOT NULL;
   `);
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false");
   // Spalte «lektionen_jahr» heisst neu «sollstunden» (Werte bleiben erhalten).
