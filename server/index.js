@@ -443,6 +443,24 @@ api.post("/events/bulk-update", ...bulkRoute(
   (b) => `Sammeländerung: ${b.updated.length} Termine`
 ));
 
+// Alle Termine des Plans im Zeitraum entfernen (Reiter «Auslasten»), mit Rückgängig-Schlüssel
+api.post("/events/clear", ...edit, versioned((req, b) => (b.count ? `Alles entfernt: ${b.count} Termine (${b.von} bis ${b.bis})` : null)),
+  async (req, res) => {
+    const von = req.body.von || "2027-01-01";
+    const bis = req.body.bis || "2027-12-31";
+    if (!isDate(von) || !isDate(bis) || bis < von) return res.status(400).json({ error: "Bitte einen gültigen Zeitraum angeben." });
+    const { rows } = await pool.query(
+      `DELETE FROM events WHERE plan_id = $1 AND date BETWEEN $2 AND $3 RETURNING ${EVENT_FIELDS}, created_by, created_at`,
+      [req.plan.id, von, bis]
+    );
+    res.json({
+      count: rows.length,
+      von,
+      bis,
+      undo_token: rows.length ? offerUndo(req, { deleted: rows }, `Alles entfernen (${rows.length} Termine)`) : null,
+    });
+  });
+
 api.post("/events/bulk-delete", ...bulkRoute(
   (req) => planning.bulkDelete(req.plan.id, req.body.ids, { serie: req.body.serie === true, dryRun: req.body.dry_run === true }),
   (b) => `Sammellöschung: ${b.deleted.length} Termine`

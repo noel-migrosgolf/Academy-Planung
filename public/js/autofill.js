@@ -93,6 +93,41 @@
     $("#af-preview").disabled = busy;
     $("#af-run").disabled = busy || !PlansUI.canEdit();
     $("#af-run").title = PlansUI.canEdit() ? "" : "Dieser Plan ist für dich nur zum Ansehen freigegeben.";
+    $("#af-clear").hidden = !PlansUI.canEdit();
+    $("#af-clear").disabled = busy;
+  }
+
+  // Alle Termine des Plans im Zeitraum löschen; Bestätigung in zwei Klicks, danach «Rückgängig».
+  let clearTimer = null;
+  async function clearAll() {
+    const btn = $("#af-clear");
+    if (!btn.dataset.confirm) {
+      btn.dataset.confirm = "1";
+      btn.textContent = "Wirklich alles entfernen?";
+      clearTimer = setTimeout(() => {
+        delete btn.dataset.confirm;
+        btn.textContent = "Alles entfernen";
+      }, 4000);
+      return;
+    }
+    clearTimeout(clearTimer);
+    delete btn.dataset.confirm;
+    btn.textContent = "Alles entfernen";
+    busy = true;
+    render();
+    try {
+      const r = await ctx.api("/events/clear", { method: "POST", body: { von: $("#af-from").value, bis: $("#af-to").value } });
+      results = new Map();
+      renderRuleResults([]);
+      $("#af-note").textContent = `${r.count} Termine entfernt.`;
+      ctx.toast(`${r.count} Termine entfernt`, r.undo_token ? { label: "Rückgängig", run: () => undo(r.undo_token) } : undefined);
+      await ctx.reload();
+    } catch (err) {
+      ctx.toast(err.message);
+    } finally {
+      busy = false;
+      render();
+    }
   }
 
   function request(dryRun) {
@@ -159,8 +194,8 @@
       await ctx.api(`/undo/${token}`, { method: "POST" });
       results = new Map();
       renderRuleResults([]);
-      $("#af-note").textContent = "Auslasten rückgängig gemacht.";
-      ctx.toast("Auslasten rückgängig gemacht");
+      $("#af-note").textContent = "Rückgängig gemacht.";
+      ctx.toast("Rückgängig gemacht");
       await ctx.reload();
     } catch (err) {
       ctx.toast(err.message);
@@ -183,6 +218,7 @@
     });
     $("#af-preview").addEventListener("click", () => run(true));
     $("#af-run").addEventListener("click", () => run(false));
+    $("#af-clear").addEventListener("click", clearAll);
     ["#af-free", "#af-rules", "#af-from", "#af-to"].forEach((s) => $(s).addEventListener("change", () => {
       results = new Map();
       renderPros();
