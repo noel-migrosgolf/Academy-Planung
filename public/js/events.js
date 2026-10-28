@@ -49,6 +49,24 @@
     return t.series_times.map(([a, b]) => `${clock(a)}–${clock(b)}`).join(" · ");
   }
 
+  // Schulferien (Kanton Zug): Kurse mit Schulferien-Regel überspringen Ferienwochen (wie server/events.js)
+  const FERIEN = (window.FERIEN_ZUG || []).filter((f) => f.type === "ferien");
+  function holidayOf(date) {
+    const iso = D.isoKey(date);
+    return FERIEN.find((f) => iso >= f.start && iso <= f.end)?.name || null;
+  }
+
+  function seriesDates(t, first) {
+    if (!data.holidayTypes?.has(t.id)) return t.series_offsets.map((o) => D.addDays(first, o));
+    const dates = [first];
+    for (let i = 1; i < t.series_offsets.length; i++) {
+      let date = D.addDays(dates[i - 1], t.series_offsets[i] - t.series_offsets[i - 1]);
+      for (let guard = 0; holidayOf(date) && guard < 60; guard++) date = D.addDays(date, 7);
+      dates.push(date);
+    }
+    return dates;
+  }
+
   // Alle Termine derselben Serie, sortiert
   function seriesOf(ev) {
     if (!ev.series_id) return [ev];
@@ -164,12 +182,13 @@
     if (box.hidden) return;
 
     const first = f.date.value ? D.parseDate(f.date.value) : null;
+    const allDates = first ? seriesDates(t, first) : [];
     const previous = [...document.querySelectorAll("#event-series-rows select")].map((s) => s.value);
     const rows = $("#event-series-rows");
     rows.replaceChildren();
     const dates = [];
-    t.series_offsets.forEach((offset, i) => {
-      const date = first ? D.addDays(first, offset) : null;
+    t.series_offsets.forEach((_, i) => {
+      const date = allDates[i] || null;
       const time = t.series_times ? ` ${clock(t.series_times[i][0])}` : "";
       dates.push(date ? `${shortDate(date)}${time}` : "–");
       const row = el("div", "series-row");

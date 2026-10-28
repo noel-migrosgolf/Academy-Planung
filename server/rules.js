@@ -3,6 +3,8 @@
 //                Obergrenzen (genau, höchstens) sperren das Einplanen; Untergrenzen erfüllt «Auslasten».
 //   wochentage – «Mindestens <prozent> % der Sollstunden von <Kursen> müssen an <Tagen> stattfinden.»
 //                Wird angezeigt und von «Auslasten» eingehalten, sperrt aber nicht.
+//   ferien     – «<Kurse> finden nicht in den Schulferien (Kanton Zug) statt.» Sperrt Termine in den Ferien;
+//                Serien überspringen Ferienwochen (die Termine rutschen um je eine Woche weiter).
 // Gezählt werden Brutto-Stunden über alle Pros; jeder Termin zählt mit seinem eigenen Datum.
 
 const { ValidationError, WEEKDAYS, validDate } = require("./events");
@@ -33,6 +35,12 @@ const typeIdOf = (v) => {
 function normalize(body) {
   const base = { aktiv: body.aktiv !== false, notiz: String(body.notiz || "").trim().slice(0, 300) };
   const empty = { type_id: null, type_ids: null, von: null, bis: null, operator: null, stunden: null, prozent: null, wochentage: null };
+
+  if (body.art === "ferien") {
+    const typeIds = [...new Set((Array.isArray(body.type_ids) ? body.type_ids : []).map(typeIdOf))];
+    if (!typeIds.length) throw new ValidationError("Bitte mindestens einen Kurs wählen.");
+    return { ...empty, ...base, art: "ferien", type_ids: typeIds };
+  }
 
   if (body.art === "wochentage") {
     const typeIds = [...new Set((Array.isArray(body.type_ids) ? body.type_ids : []).map(typeIdOf))];
@@ -74,6 +82,10 @@ function daysText(days) {
 
 // Satz zur Regel; nameOf(typId) liefert den Kursnamen
 function describe(rule, nameOf) {
+  if (rule.art === "ferien") {
+    const names = rule.type_ids.map(nameOf).filter(Boolean);
+    return `${names.join(", ") || "(Kurs gelöscht)"} ${names.length > 1 ? "finden" : "findet"} nicht in den Schulferien (Kanton Zug) statt`;
+  }
   if (rule.art === "wochentage") {
     const names = rule.type_ids.map(nameOf).filter(Boolean);
     return `Mindestens ${rule.prozent} % der Sollstunden von ${names.join(", ") || "(Kurs gelöscht)"} ${daysText(rule.wochentage)}`;

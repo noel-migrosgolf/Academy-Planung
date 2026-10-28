@@ -182,17 +182,21 @@
   async function loadData() {
     let types;
     let events;
+    let rules;
     try {
-      [{ pros }, { types }, { events }] = await Promise.all([
+      [{ pros }, { types }, { events }, { rules }] = await Promise.all([
         api("/pros"),
         api("/event-types"),
         api(`/events?from=${YEAR}-01-01&to=${YEAR}-12-31`),
+        api("/rules"),
       ]);
     } catch (err) {
       toast(err.message);
       return;
     }
-    const data = { pros, types, events };
+    // Kurse mit aktiver Schulferien-Regel (für die Serien-Vorschau im Event-Dialog)
+    const holidayTypes = new Set(rules.filter((r) => r.aktiv && r.art === "ferien").flatMap((r) => r.type_ids));
+    const data = { pros, types, events, holidayTypes };
     Events.setData(data);
     Planner.setData(data);
     AutoFillPage.setData(data);

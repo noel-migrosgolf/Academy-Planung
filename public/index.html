@@ -343,6 +343,7 @@
             <div class="seg" role="tablist" aria-label="Regelart" id="rule-kind">
               <button type="button" data-art="stunden" class="on">Stunden im Zeitraum</button>
               <button type="button" data-art="wochentage">Anteil nach Wochentag</button>
+              <button type="button" data-art="ferien">Schulferien</button>
             </div>
           </div>
           <form class="bd rule-form" id="rule-form" novalidate>
@@ -367,7 +368,7 @@
               <span>Mindestens</span>
               <input type="number" name="prozent" min="0" max="100" step="5" placeholder="z. B. 60" class="rule-num">
               <span>% der Sollstunden von</span>
-              <div class="chips" id="rule-types"></div>
+              <div class="chips rule-type-chips"></div>
               <span>müssen</span>
               <div class="chips" id="rule-days">
                 <button type="button" class="chip" data-preset="0,1,2,3,4">Wochentage</button>
@@ -382,6 +383,11 @@
                 <button type="button" class="chip" data-day="6">So</button>
               </div>
               <span>stattfinden.</span>
+            </div>
+            <div class="rule-sentence rule-share" id="rule-s-ferien" hidden>
+              <div class="chips rule-type-chips"></div>
+              <span>finden nicht in den Schulferien des Kantons Zug statt.</span>
+              <p class="note">Termine in den Ferien werden abgelehnt; Serien überspringen Ferienwochen (die Termine rutschen um je eine Woche weiter). Feiertage zählen nicht dazu.</p>
             </div>
             <p class="form-error" role="alert"></p>
             <div class="actions">

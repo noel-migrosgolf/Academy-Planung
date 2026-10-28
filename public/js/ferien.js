@@ -1,7 +1,9 @@
 // Schulferien und schulfreie Tage Kanton Zug (öffentliche Schulen), Kalenderjahr 2027.
 // Quelle: zg.ch – Schulferien 2026/27 bis 2030/31 (Amt für gemeindliche Schulen).
 // Daten jeweils inklusive erstem und letztem Ferientag.
-window.FERIEN_ZUG = [
+// Wird im Browser (window.FERIEN_ZUG) und auf dem Server (require) verwendet.
+(function (root) {
+const FERIEN_ZUG = [
   { name: "Weihnachtsferien", start: "2026-12-19", end: "2027-01-03", type: "ferien" },
   { name: "Sportferien", start: "2027-02-06", end: "2027-02-21", type: "ferien" },
   { name: "Karfreitag", start: "2027-03-26", end: "2027-03-26", type: "feiertag" },
@@ -16,3 +18,6 @@ window.FERIEN_ZUG = [
   { name: "Mariä Empfängnis", start: "2027-12-08", end: "2027-12-08", type: "feiertag" },
   { name: "Weihnachtsferien", start: "2027-12-23", end: "2028-01-05", type: "ferien" },
 ];
+if (typeof module !== "undefined" && module.exports) module.exports = FERIEN_ZUG;
+else root.FERIEN_ZUG = FERIEN_ZUG;
+})(this);

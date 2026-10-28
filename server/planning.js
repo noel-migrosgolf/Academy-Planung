@@ -5,6 +5,7 @@
 const { pool } = require("./db");
 const eventsData = require("./events");
 const rulesData = require("./rules");
+const FERIEN_ZUG = require("../public/js/ferien.js").filter((f) => f.type === "ferien");
 
 const TYPE_FIELDS = `id, ${eventsData.TYPE_COLUMNS.join(", ")}`;
 const EVENT_FIELDS =
@@ -60,6 +61,17 @@ async function assertFree(db, planId, ev, ignoreId, label) {
     err.status = 409;
     throw err;
   }
+}
+
+// Schulferien (Kanton Zug) an diesem Datum: Name der Ferien oder null (Feiertage zählen nicht)
+function holidayOf(date) {
+  return FERIEN_ZUG.find((f) => date >= f.start && date <= f.end)?.name || null;
+}
+
+// Hat der Typ im Plan eine aktive Schulferien-Regel? Dann Sperrfunktion für planNew/planUpdate.
+async function blockedFor(db, planId, typeId) {
+  const rules = await loadRules(db, planId);
+  return rules.some((r) => r.art === "ferien" && r.type_ids.includes(typeId)) ? holidayOf : undefined;
 }
 
 // Eingetragene Abwesenheit des Pros an diesem Datum (oder null)
@@ -324,7 +336,7 @@ async function bulkCreate(planId, items, { dryRun = false, userId = null } = {})
         start_min: timeArg(item.start_min ?? item.von),
         end_min: timeArg(item.end_min ?? item.bis),
         notiz: item.notiz,
-      });
+      }, { blocked: await blockedFor(db, planId, type.id) });
       await assertArea(db, type, planned.map((ev) => ev.pro_id), label);
       await assertAvailable(db, planned, label);
       await assertCapacity(db, planId, type, sumBrutto(planned, type), label);
@@ -386,7 +398,7 @@ async function bulkUpdate(planId, changes, { dryRun = false } = {}) {
         start_min: has(c.von) ? timeArg(c.von) : current.start_min,
         end_min: has(c.bis) ? timeArg(c.bis) : current.end_min,
         notiz: c.notiz ?? current.notiz,
-      });
+      }, { blocked: await blockedFor(db, planId, type.id) });
       await assertArea(db, type, [ev.pro_id], label);
       const before = type.id === current.type_id ? minutesOf(current, type, "brutto") : 0;
       await assertAvailable(db, [ev], label);
@@ -444,6 +456,11 @@ async function ruleStatus(planId, db = pool) {
   const list = [];
   const nameOf = (id) => typeById.get(id)?.name;
   for (const rule of await loadRules(db, planId, { activeOnly: false })) {
+    if (rule.art === "ferien") {
+      const inHolidays = await holidayViolations(db, rule);
+      list.push({ ...rule, text: rulesData.describe(rule, nameOf), ist_termine: inHolidays.length, erfuellt: !inHolidays.length });
+      continue;
+    }
     if (rule.art === "wochentage") {
       const share = await shareOf(db, rule, typeById);
       list.push({ ...rule, text: rulesData.describe(rule, nameOf), ...share });
@@ -473,6 +490,15 @@ function shareResult(rule, onMinutes, totalMinutes) {
     stunden_total: Math.round((totalMinutes / 60) * 10) / 10,
     erfuellt: ist === null || ist >= rule.prozent - rulesData.EPS,
   };
+}
+
+// Termine der Regel-Kurse, die in den Schulferien liegen
+async function holidayViolations(db, rule) {
+  const { rows } = await db.query(
+    "SELECT id, type_id, pro_id, to_char(date, 'YYYY-MM-DD') AS date FROM events WHERE plan_id = $2 AND type_id = ANY($1::int[]) ORDER BY date",
+    [rule.type_ids, rule.plan_id]
+  );
+  return rows.filter((ev) => holidayOf(ev.date));
 }
 
 async function shareOf(db, rule, typeById) {
@@ -515,6 +541,20 @@ async function diagnoseRule(planId, value, db = pool) {
     for (const ev of list) sums.set(ev.pro_id, (sums.get(ev.pro_id) || 0) + minutesOf(ev, type || typeById.get(ev.type_id), "brutto"));
     return [...sums].sort((a, b) => b[1] - a[1]).map(([pid, m]) => `${proName.get(pid)} ${h(m)}`).join(", ") || "niemand";
   };
+
+  if (rule.art === "ferien") {
+    const hits = await holidayViolations(db, rule);
+    lines.push(hits.length
+      ? `Stand: ${hits.length} Termine liegen in den Schulferien – nicht erfüllt.`
+      : "Stand: kein Termin in den Schulferien – erfüllt.");
+    for (const ev of hits.slice(0, 10)) {
+      lines.push(`${formatDate(ev.date)} (${holidayOf(ev.date)}): ${typeById.get(ev.type_id)?.name} mit ${proName.get(ev.pro_id)}`);
+    }
+    if (hits.length > 10) lines.push(`… ${hits.length - 10} weitere`);
+    if (hits.length) lines.push("Lösung: diese Termine löschen oder verschieben; die Regel gilt für neue Termine, bestehende werden nicht verändert.");
+    lines.push("Neue Serien dieser Kurse überspringen Ferienwochen automatisch (Termine rutschen um eine Woche weiter).");
+    return lines;
+  }
 
   if (rule.art === "wochentage") {
     const days = new Set(rule.wochentage);
@@ -596,14 +636,16 @@ async function diagnoseRule(planId, value, db = pool) {
   let seriesHours = 0;
   let withPro = 0;
   let withProFreeDays = 0;
+  const blocked = await blockedFor(db, planId, type.id); // Schulferien-Regel: Serien überspringen Ferienwochen
   for (let d = from; d <= to; d = eventsData.addDays(d, 1)) {
     if (type.first_weekday !== null && eventsData.weekdayOf(d) !== type.first_weekday) continue;
-    if (eventsData.addDays(d, last) > to) break;
-    if (!starts++) seriesHours = eventsData.planNew(type, { pro_id: pros[0].id, date: d }).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
+    if (blocked?.(d)) continue;
+    if (eventsData.seriesDates(type, d, blocked).at(-1) > to) continue;
+    if (!starts++) seriesHours = eventsData.planNew(type, { pro_id: pros[0].id, date: d }, { blocked }).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
     let any = false;
     let anyFreeDays = false;
     for (const pro of pros) {
-      const series = eventsData.planNew(type, { pro_id: pro.id, date: d });
+      const series = eventsData.planNew(type, { pro_id: pro.id, date: d }, { blocked });
       if (!series.every(isFree)) continue;
       any = true;
       const off = new Set((pro.freie_tage || []).map((x) => WEEKDAY_INDEX[String(x).toLowerCase()]));
@@ -688,15 +730,18 @@ async function autoFill(
 
     // Mögliche Starttage eines Typs (ganze Serie im Zeitraum und im einplanbaren Zeitraum des Typs),
     // in einer Reihenfolge, die den Zeitraum gleichmässig abdeckt.
+    // Kurse mit Schulferien-Regel: kein Start in den Ferien, Serien überspringen Ferienwochen.
     function candidatesFor(t, rangeFrom, rangeTo) {
-      const last = t.series_offsets[t.series_offsets.length - 1];
       const start = t.einplanbar_von && t.einplanbar_von > rangeFrom ? t.einplanbar_von : rangeFrom;
       const end = t.einplanbar_bis && t.einplanbar_bis < rangeTo ? t.einplanbar_bis : rangeTo;
+      const blocked = planOpts(t).blocked;
       const list = [];
       for (let d = start; d <= end; d = eventsData.addDays(d, 1)) {
         if (t.first_weekday !== null && eventsData.weekdayOf(d) !== t.first_weekday) continue;
-        if (eventsData.addDays(d, last) > end) break;
-        list.push({ type: t, date: d });
+        if (blocked?.(d)) continue;
+        const dates = eventsData.seriesDates(t, d, blocked);
+        if (dates[dates.length - 1] > end) continue;
+        list.push({ type: t, date: d, dates });
       }
       return list;
     }
@@ -722,6 +767,8 @@ async function autoFill(
     const nameOf = (id) => typeById.get(id)?.name;
     const rules = allRules.filter((r) => r.art === "stunden").map((r) => ({ ...r, type: typeById.get(r.type_id) }));
     // Anteil-Regeln (Wochentage): Brutto-Minuten an den gewählten Tagen und insgesamt
+    const blockedTypes = new Set(allRules.filter((r) => r.art === "ferien").flatMap((r) => r.type_ids));
+    const planOpts = (t) => (blockedTypes.has(t.id) ? { blocked: holidayOf } : {});
     const shareRules = allRules.filter((r) => r.art === "wochentage")
       .map((r) => ({ ...r, ids: new Set(r.type_ids), days: new Set(r.wochentage), on: 0, total: 0 }));
     const shareAdd = (rule, list) => {
@@ -811,15 +858,11 @@ async function autoFill(
           const h = ruleUsed.get(rule.id) / 60;
           return op === "gt" ? h > rule.stunden + rulesData.EPS : h >= rule.stunden - rulesData.EPS;
         };
-        const offsets = rule.type.series_offsets;
-        const touches = (date) => offsets.some((o) => {
-          const d = eventsData.addDays(date, o);
-          return d >= rule.von && d <= rule.bis;
-        });
-        for (const { type, date } of spread(candidatesFor(rule.type, from, to).filter((c) => touches(c.date)))) {
+        const touches = (dates) => dates.some((d) => d >= rule.von && d <= rule.bis);
+        for (const { type, date } of spread(candidatesFor(rule.type, from, to).filter((c) => touches(c.dates)))) {
           if (done()) break;
           // Beitrag zur Regel: Brutto-Minuten der Termine im Regelzeitraum (unabhängig vom Pro)
-          const sample = eventsData.planNew(type, { pro_id: 1, date });
+          const sample = eventsData.planNew(type, { pro_id: 1, date }, planOpts(type));
           const gain = sample.filter((ev) => inRule(rule, ev)).reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
           if (op === "eq" && ruleUsed.get(rule.id) + gain > target + 0.6) continue; // «genau» nicht überschreiten
           const minutes = seriesMinutes(type, sample.filter(inYear));
@@ -829,7 +872,7 @@ async function autoFill(
             .filter((p) => goalOf.get(p.id) > 0 && (planned.get(p.id) || 0) + minutes <= goalOf.get(p.id) + minutes / 2)
             .sort((a, b) => (planned.get(a.id) || 0) / goalOf.get(a.id) - (planned.get(b.id) || 0) / goalOf.get(b.id));
           for (const pro of ranked) {
-            const series = eventsData.planNew(type, { pro_id: pro.id, date });
+            const series = eventsData.planNew(type, { pro_id: pro.id, date }, planOpts(type));
             if (!fits(type, series, pro)) continue;
             commit(type, series, pro);
             break;
@@ -853,7 +896,7 @@ async function autoFill(
       for (const { type, date } of hasTypes ? ordered : []) {
         const have = planned.get(pro.id) || 0;
         if (have >= goal) break;
-        const series = eventsData.planNew(type, { pro_id: pro.id, date });
+        const series = eventsData.planNew(type, { pro_id: pro.id, date }, planOpts(type));
         const minutes = seriesMinutes(type, series);
         if (have + minutes > goal + minutes / 2) continue; // nicht deutlich übers Ziel
         if (!fits(type, series, pro)) continue;
@@ -993,6 +1036,6 @@ async function describeEvents(list) {
 
 module.exports = {
   TYPE_FIELDS, EVENT_FIELDS, PlanningError,
-  loadType, assertFree, assertArea, assertAvailable, assertCapacity, assertRules, ruleStatus, diagnoseRule, formatDate, clock, timeArg, minutesOf,
+  loadType, assertFree, assertArea, assertAvailable, blockedFor, assertCapacity, assertRules, ruleStatus, diagnoseRule, formatDate, clock, timeArg, minutesOf,
   overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, autoFill, undoChange, describeEvents,
 };

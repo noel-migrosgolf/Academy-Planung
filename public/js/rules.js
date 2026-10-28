@@ -1,6 +1,7 @@
 // Regeln (Reiter «Regeln»), zwei Arten:
 //   stunden    – «Zwischen Datum x und y müssen <Vergleich> z Sollstunden von Kurs k stattfinden.»
 //   wochentage – «Mindestens x % der Sollstunden von Kursen … müssen an Tagen … stattfinden.»
+//   ferien     – «Kurse … finden nicht in den Schulferien des Kantons Zug statt.»
 // Regeln gehören zum aktuellen Plan; anlegen, bearbeiten, (de)aktivieren und löschen darf, wer den Plan bearbeiten darf.
 (function () {
   const { el } = window.Dates;
@@ -20,6 +21,7 @@
   // Abstand zum Ziel in Worten, z. B. «fehlen 12 h», «6 h zu viel» oder «fehlen 8 Prozentpunkte»
   function gapText(r) {
     if (!r.aktiv) return "inaktiv";
+    if (r.art === "ferien") return r.erfuellt ? "erfüllt" : "verschieben oder löschen";
     if (r.art === "wochentage") {
       if (r.ist_prozent === null) return "noch nichts geplant";
       return r.erfuellt ? "erfüllt" : `fehlen ${(r.prozent - r.ist_prozent).toLocaleString("de-CH", { maximumFractionDigits: 1 })} Prozentpunkte`;
@@ -32,6 +34,9 @@
   }
 
   function meterOf(r) {
+    if (r.art === "ferien") {
+      return { fill: r.erfuellt ? 100 : 0, text: r.erfuellt ? "kein Termin in den Ferien" : `${r.ist_termine} Termine in den Ferien` };
+    }
     if (r.art === "wochentage") {
       return {
         fill: r.prozent ? ((r.ist_prozent ?? 0) / r.prozent) * 100 : 100,
@@ -126,20 +131,23 @@
     document.querySelectorAll("#rule-kind button").forEach((b) => b.classList.toggle("on", b.dataset.art === kind));
     $("#rule-s-stunden").hidden = kind !== "stunden";
     $("#rule-s-wochentage").hidden = kind !== "wochentage";
+    $("#rule-s-ferien").hidden = kind !== "ferien";
     $("#rule-form .form-error").textContent = "";
   }
 
+  // Kurs-Mehrfachauswahl (für «Anteil nach Wochentag» und «Schulferien»)
   function renderTypeChips() {
-    const box = $("#rule-types");
-    box.replaceChildren();
-    for (const t of data.types) {
-      const chip = el("button", `chip${selTypes.has(t.id) ? " sel" : ""}`, t.code ? `${t.code} · ${t.name}` : t.name);
-      chip.type = "button";
-      chip.addEventListener("click", () => {
-        selTypes.has(t.id) ? selTypes.delete(t.id) : selTypes.add(t.id);
-        renderTypeChips();
-      });
-      box.append(chip);
+    for (const box of document.querySelectorAll("#rule-form .rule-type-chips")) {
+      box.replaceChildren();
+      for (const t of data.types) {
+        const chip = el("button", `chip${selTypes.has(t.id) ? " sel" : ""}`, t.code ? `${t.code} · ${t.name}` : t.name);
+        chip.type = "button";
+        chip.addEventListener("click", () => {
+          selTypes.has(t.id) ? selTypes.delete(t.id) : selTypes.add(t.id);
+          renderTypeChips();
+        });
+        box.append(chip);
+      }
     }
   }
 
@@ -161,7 +169,11 @@
     editing = r;
     setKind(r.art);
     const f = $("#rule-form").elements;
-    if (r.art === "wochentage") {
+    if (r.art === "ferien") {
+      selTypes.clear();
+      r.type_ids.forEach((id) => selTypes.add(id));
+      renderTypeChips();
+    } else if (r.art === "wochentage") {
       f.prozent.value = r.prozent;
       selTypes.clear();
       r.type_ids.forEach((id) => selTypes.add(id));
@@ -200,6 +212,7 @@
   function readForm() {
     const f = $("#rule-form").elements;
     const base = { aktiv: editing ? editing.aktiv : true, notiz: editing?.notiz || "" };
+    if (kind === "ferien") return { ...base, art: "ferien", type_ids: [...selTypes] };
     if (kind === "wochentage") {
       return {
         ...base,

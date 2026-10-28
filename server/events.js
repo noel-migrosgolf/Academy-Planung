@@ -250,24 +250,46 @@ const SYNC_FIXED_EVENTS_SQL = `
            WHERE t.fixed_start_min IS NOT NULL AND ($1::int IS NULL OR t.id = $1)) x
    WHERE e.id = x.id`;
 
+// Daten aller Termine einer Serie ab dem Starttag. blocked(datum) (optional, z. B. Schulferien-Regel)
+// gibt die Ferienbezeichnung zurück: Der Start darf nicht darin liegen, spätere Termine rutschen samt
+// allen folgenden um je eine Woche weiter, bis sie ausserhalb liegen.
+function seriesDates(type, start, blocked) {
+  const offsets = type.series_offsets;
+  if (!blocked) return offsets.map((offset) => addDays(start, offset));
+  const hit = blocked(start);
+  if (hit) throw new ValidationError(`«${type.name}» findet nicht in den Schulferien statt (${formatDate(start)}: ${hit}).`);
+  const dates = [start];
+  for (let i = 1; i < offsets.length; i++) {
+    let date = addDays(dates[i - 1], offsets[i] - offsets[i - 1]);
+    for (let guard = 0; blocked(date); guard++) {
+      if (guard > 60) throw new ValidationError(`«${type.name}»: kein Termin ausserhalb der Schulferien gefunden.`);
+      date = addDays(date, 7);
+    }
+    dates.push(date);
+  }
+  return dates;
+}
+
 // Neues Event bzw. neue Serie: berechnet alle Termine aus Typ und Eingabe.
 // body.pros (optional) wählt pro Termin einen eigenen Pro, sonst gilt body.pro_id.
-function planNew(type, body) {
+// opts.blocked (optional): Tage, an denen der Typ nicht stattfindet (siehe seriesDates).
+function planNew(type, body, opts = {}) {
   const date = isoDate(body.date);
   if (type.first_weekday !== null && weekdayOf(date) !== type.first_weekday) {
     throw new ValidationError(`«${type.name}» beginnt immer an einem ${WEEKDAYS[type.first_weekday]}.`);
   }
   const offsets = type.series_offsets;
+  const dates = seriesDates(type, date, opts.blocked);
   const pros = Array.isArray(body.pros) ? body.pros : [];
   const fallback = empty(body.pro_id) ? null : body.pro_id;
   const seriesId = offsets.length > 1 ? crypto.randomUUID() : null;
   const notiz = String(body.notiz || "").trim().slice(0, 500);
 
-  assertWindow(type, offsets.map((offset) => addDays(date, offset)));
+  assertWindow(type, dates);
   return offsets.map((offset, i) => ({
     type_id: type.id,
     pro_id: id(empty(pros[i]) ? fallback : pros[i], offsets.length > 1 ? `Pro für Termin ${i + 1}` : "Pro"),
-    date: addDays(date, offset),
+    date: dates[i],
     ...times(type, body, i),
     notiz,
     series_id: seriesId,
@@ -277,7 +299,7 @@ function planNew(type, body) {
 
 // Bestehendes Event ändern. Termine einer Serie behalten Datum und Zeit,
 // nur Pro und Notiz lassen sich pro Termin ändern.
-function planUpdate(existing, type, body) {
+function planUpdate(existing, type, body, opts = {}) {
   const notiz = String(body.notiz || "").trim().slice(0, 500);
   if (existing.series_id) {
     return { ...existing, pro_id: id(body.pro_id, "Pro"), notiz };
@@ -290,10 +312,12 @@ function planUpdate(existing, type, body) {
     throw new ValidationError(`«${type.name}» findet nur an einem ${WEEKDAYS[type.first_weekday]} statt.`);
   }
   assertWindow(type, [date]);
+  const hit = opts.blocked?.(date);
+  if (hit) throw new ValidationError(`«${type.name}» findet nicht in den Schulferien statt (${formatDate(date)}: ${hit}).`);
   return { ...existing, type_id: type.id, pro_id: id(body.pro_id, "Pro"), date, ...times(type, body), notiz };
 }
 
 module.exports = {
   SEED_TYPES, SEED_SERIES_TYPES, TYPE_COLUMNS, WEEKDAYS, AREAS, ValidationError,
-  normalizeType, typeValues, planNew, planUpdate, id, addDays, weekdayOf, assertWindow, validDate, SYNC_FIXED_EVENTS_SQL,
+  normalizeType, typeValues, planNew, planUpdate, seriesDates, id, addDays, weekdayOf, assertWindow, validDate, SYNC_FIXED_EVENTS_SQL,
 };

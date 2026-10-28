@@ -308,11 +308,11 @@ async function inTransaction(res, fn) {
 
 api.post("/events", ...edit, versioned(async (req, b) => `Geplant: ${await describeEvents(b.events)}`), (req, res) =>
   inTransaction(res, async (db) => {
+    const planId = req.plan.id;
     const type = await loadType(db, eventsData.id(req.body.type_id, "Event-Typ"));
-    const planned = eventsData.planNew(type, req.body);
+    const planned = eventsData.planNew(type, req.body, { blocked: await planning.blockedFor(db, planId, type.id) });
     await planning.assertArea(db, type, planned.map((ev) => ev.pro_id));
     await planning.assertAvailable(db, planned);
-    const planId = req.plan.id;
     await planning.assertCapacity(db, planId, type, planned.reduce((sum, ev) => sum + planning.minutesOf(ev, type, "brutto"), 0));
     await planning.assertRules(db, planId, type, planned);
     const created = [];
@@ -337,7 +337,7 @@ api.put("/events/:id", ...edit, versioned(async (req, b) => `Geändert: ${await 
     if (!rows[0]) return res.status(404).json({ error: "Event nicht gefunden." });
     const typeId = rows[0].series_id ? rows[0].type_id : eventsData.id(req.body.type_id, "Event-Typ");
     const type = await loadType(db, typeId);
-    const ev = eventsData.planUpdate(rows[0], type, req.body);
+    const ev = eventsData.planUpdate(rows[0], type, req.body, { blocked: await planning.blockedFor(db, planId, type.id) });
     await planning.assertArea(db, type, [ev.pro_id]);
     await planning.assertAvailable(db, [ev]);
     const before = type.id === rows[0].type_id ? planning.minutesOf(rows[0], type, "brutto") : 0;
