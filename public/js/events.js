@@ -232,7 +232,9 @@
     const f = $("#event-form").elements;
     const t = selectedType();
     const hint = $("#event-weekday-hint");
-    const wrong = t && t.first_weekday !== null && f.date.value && D.weekday(D.parseDate(f.date.value)) !== t.first_weekday;
+    // Bestehende Serien-Termine liegen fest (Folgetermine dürfen an anderen Tagen sein)
+    const wrong = !editingEvent?.series_id && t && t.first_weekday !== null && f.date.value
+      && D.weekday(D.parseDate(f.date.value)) !== t.first_weekday;
     hint.hidden = !wrong;
     if (wrong) hint.textContent = `«${t.name}» beginnt immer an einem ${WEEKDAYS[t.first_weekday]}.`;
   }
@@ -308,6 +310,16 @@
     $("#event-delete").hidden = !event;
     $("#event-delete").textContent = series ? "Serie löschen" : "Löschen";
     $("#event-series-note").hidden = !series;
+    // Serien-Termin: Pro-Wechsel nur für diesen, ab diesem oder für alle Termine der Serie
+    $("#event-scope-wrap").hidden = !series;
+    if (series) {
+      const total = seriesOf(event).length;
+      const last = Math.max(...seriesOf(event).map((x) => x.series_index));
+      const options = [["", `nur diesen Termin (${event.series_index})`]];
+      if (event.series_index < last) options.push(["folgende", `diesen und alle folgenden Termine (${event.series_index}–${last})`]);
+      options.push(["alle", `alle ${total} Termine der Serie`]);
+      $("#event-scope").replaceChildren(...options.map(([value, label]) => new Option(label, value)));
+    }
 
     const f = form.elements;
     // Serien-Typen lassen sich nur neu anlegen, nicht aus einem einzelnen Event
@@ -623,6 +635,7 @@
         end_min: f.end.value ? parseClock(f.end.value) : null,
         notiz: f.notiz.value,
       };
+      if (editingEvent?.series_id && f.serie.value) body.serie = f.serie.value;
       const perTermin = [...document.querySelectorAll("#event-series-rows select")];
       if (!editingEvent && perTermin.length) body.pros = perTermin.map((s) => (s.value ? Number(s.value) : null));
       try {
@@ -632,7 +645,9 @@
         });
         $("#dlg-event").close();
         const count = result.events?.length || 1;
-        ctx.toast(editingEvent ? "Event gespeichert" : count > 1 ? `Serie mit ${count} Terminen erstellt` : "Event erstellt");
+        ctx.toast(editingEvent
+          ? count > 1 ? `Pro für ${count} Termine der Serie übernommen` : "Event gespeichert"
+          : count > 1 ? `Serie mit ${count} Terminen erstellt` : "Event erstellt");
         ctx.reload();
       } catch (err) {
         ef.querySelector(".form-error").textContent = err.message;

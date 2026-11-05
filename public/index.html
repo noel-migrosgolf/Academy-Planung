@@ -590,7 +590,10 @@
           </label>
         </div>
         <p class="note" id="event-fixed-hint" hidden>Die Zeit ist durch den Event-Typ fest vorgegeben (inkl. Puffer am Ende).</p>
-        <p class="note" id="event-series-note" hidden>Datum und Zeit sind durch die Serie festgelegt. Pro und Notiz gelten nur für diesen Termin.</p>
+        <label id="event-scope-wrap" hidden>Pro übernehmen für
+          <select name="serie" class="fsel" id="event-scope"></select>
+        </label>
+        <p class="note" id="event-series-note" hidden>Datum und Zeit sind durch die Serie festgelegt. Die Notiz gilt nur für diesen Termin.</p>
         <div class="series" id="event-series" hidden>
           <div class="series-summary" id="event-series-summary"></div>
           <details id="event-series-more">

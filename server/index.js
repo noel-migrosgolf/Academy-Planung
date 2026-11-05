@@ -329,7 +329,7 @@ api.post("/events", ...edit, versioned(async (req, b) => `Geplant: ${await descr
   })
 );
 
-api.put("/events/:id", ...edit, versioned(async (req, b) => `Geändert: ${await describeEvents([b.event])}`), (req, res) =>
+api.put("/events/:id", ...edit, versioned(async (req, b) => `Geändert: ${await describeEvents(b.events)}`), (req, res) =>
   inTransaction(res, async (db) => {
     const eventId = Number.parseInt(req.params.id, 10) || 0;
     const planId = req.plan.id;
@@ -349,7 +349,25 @@ api.put("/events/:id", ...edit, versioned(async (req, b) => `Geändert: ${await 
         WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
       [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz, eventId]
     );
-    res.json({ event: updated[0] });
+    // Serie: den Pro auf Wunsch auch für die folgenden bzw. alle anderen Termine übernehmen (Notiz bleibt je Termin)
+    const others = [];
+    const scope = req.body.serie;
+    if (rows[0].series_id && (scope === "folgende" || scope === "alle")) {
+      const { rows: siblings } = await db.query(
+        `SELECT ${EVENT_FIELDS} FROM events
+          WHERE plan_id = $1 AND series_id = $2 AND id <> $3 AND pro_id <> $4 AND series_index > $5
+          ORDER BY series_index FOR UPDATE`,
+        [planId, rows[0].series_id, eventId, ev.pro_id, scope === "folgende" ? rows[0].series_index : 0]
+      );
+      const moved = siblings.map((s) => ({ ...s, pro_id: ev.pro_id }));
+      await planning.assertAvailable(db, moved);
+      for (const s of moved) {
+        await assertFree(db, planId, s, s.id, `Termin ${s.series_index}: `);
+        const { rows: done } = await db.query(`UPDATE events SET pro_id = $1 WHERE id = $2 RETURNING ${EVENT_FIELDS}`, [s.pro_id, s.id]);
+        others.push(done[0]);
+      }
+    }
+    res.json({ event: updated[0], events: [updated[0], ...others] });
   })
 );
 
