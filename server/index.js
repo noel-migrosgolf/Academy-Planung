@@ -568,10 +568,13 @@ api.delete("/rules/:id", ...edit, async (req, res) => {
 
 // --- Auslasten: Kurse automatisch verteilen, Ziel je Pro (Reiter «Auslasten») ---
 
-// { ziele: [{ pro, prozent }], typen?, von?, bis?, freie_tage_beachten?, dry_run? }
+// { ziele: [{ pro, prozent }], typen?, prioritaet?, uebrige?, nachplanen?: [{ typ, anzahl }], ziel_ueberschreiten?,
+//   von?, bis?, freie_tage_beachten?, regeln_erfuellen?, dry_run? } – siehe planning.autoFill
 // Admins speichern die Ziele dabei als Soll-Auslastung der Pros.
 api.post("/autofill", ...edit,
-  versioned((req, b) => (b.dryRun || !b.count ? null : `Auslasten: ${b.summary.length} Pros (${b.count} Termine)`)),
+  versioned((req, b) => (b.dryRun || !b.count ? null
+    : req.body.nachplanen?.length ? `Nachplanen: ${b.typen_ergebnis.map((t) => `${t.typ} ×${t.geplant}`).join(", ")} (${b.count} Termine)`
+    : `Auslasten: ${b.summary.length} Pros (${b.count} Termine)`)),
   async (req, res) => {
     const dryRun = req.body.dry_run === true;
     try {
@@ -586,6 +589,7 @@ api.post("/autofill", ...edit,
         count: r.created.length,
         summary: r.summary,
         regeln: r.regeln,
+        typen_ergebnis: r.typen_ergebnis,
         created: dryRun ? [] : r.created.map((e) => e.id),
         undo_token: dryRun || !r.created.length ? null : offerUndo(req, { created: r.created }, `Auslasten (${r.created.length} Termine)`),
       });

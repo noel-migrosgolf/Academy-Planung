@@ -683,3 +683,34 @@ fieldset > .btn { align-self: flex-start; }
 .move-check .mc-bad { color: var(--crit-ink); font-weight: 600; }
 .move-check .mc-hint { color: var(--ink-3); }
 .move-check .mc-ok { color: var(--good); font-weight: 600; }
+
+/* Auslasten-Assistent */
+.af-steps { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 0 0 14px; }
+.af-steps button {
+  display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px 0 6px; border-radius: 999px;
+  border: 1px solid var(--line-2); background: var(--surface); cursor: pointer; font-size: 13px; font-weight: 550; color: var(--ink-2);
+}
+.af-steps button b { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--surface-3); font-size: 12px; }
+.af-steps button.on { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+.af-steps button.on b { background: var(--accent); color: #fff; }
+.af-steps button.done b { background: var(--good); color: #fff; }
+.af-modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.af-mode {
+  display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 14px 16px; border-radius: 12px;
+  border: 1px solid var(--line-2); background: var(--surface); cursor: pointer; color: var(--ink); font: inherit;
+}
+.af-mode b { font-size: 14px; }
+.af-mode span { font-size: 12.5px; color: var(--ink-3); line-height: 1.45; }
+.af-mode.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent) inset; }
+.af-prio { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.af-prio li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 8px; font-size: 13px; }
+.af-prio li .n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; }
+.af-prio li .name { flex: 1; min-width: 0; }
+.af-prio li .btn { height: 26px; min-width: 26px; padding: 0 6px; }
+.af-prio-empty { color: var(--ink-3); font-size: 12.5px; }
+.af-over { padding-top: 0; }
+.af-table input[type=number] { width: 80px; height: 30px; }
+.af-summary { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
+.af-summary b { color: var(--ink); }
+@media (max-width: 600px) { .af-steps button { padding-right: 8px; } }
+.af-table input[type=checkbox] { width: auto; height: auto; margin: 0; accent-color: var(--accent); }

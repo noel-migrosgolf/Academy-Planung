@@ -297,24 +297,64 @@
       <!-- Auslasten: Ziel je Pro, Kurse automatisch verteilen -->
       <section id="page-auslasten" class="page" hidden>
         <h1>Auslasten</h1>
-        <p class="lead">Ziel-Auslastung je Pro einstellen und die gewählten Kurse automatisch über 2027 verteilen. Bestehende Kurse zählen mit; es wird nur ergänzt, nie gelöscht. Jeder Pro bekommt nur Kurse seines Einsatzbereichs und nie zwei Termine gleichzeitig.</p>
-        <div class="card stack">
-          <div class="hd"><h3>Kurse</h3><span class="sub">Diese Kurstypen werden verteilt (nur Typen mit fester Zeit)</span></div>
+        <p class="lead">Assistent zum automatischen Verteilen der Kurse über 2027. Bestehende Kurse zählen mit; es wird nur ergänzt, nie gelöscht. Jeder Pro bekommt nur Kurse seines Einsatzbereichs und nie zwei Termine gleichzeitig.</p>
+        <ol class="af-steps" id="af-steps">
+          <li><button type="button" data-step="1"><b>1</b> Art</button></li>
+          <li><button type="button" data-step="2"><b>2</b> Kurstypen</button></li>
+          <li><button type="button" data-step="3"><b>3</b> Pros &amp; Ziel</button></li>
+          <li><button type="button" data-step="4"><b>4</b> Ausführen</button></li>
+        </ol>
+
+        <div class="card stack af-step" data-step="1">
+          <div class="hd"><h3>Was möchtest du planen?</h3></div>
+          <div class="bd af-modes">
+            <button type="button" class="af-mode" data-mode="auslasten">
+              <b>Pros auslasten</b>
+              <span>Alle Pros bis zu ihrer Ziel-Auslastung füllen. Bis zu 10 Kurstypen lassen sich priorisieren: Sie werden der Reihe nach zuerst verteilt, danach füllen die übrigen auf.</span>
+            </button>
+            <button type="button" class="af-mode" data-mode="nachplanen">
+              <b>Einzelne Kurstypen nachplanen</b>
+              <span>Nur ausgewählte Kurstypen zusätzlich einplanen, je mit gewünschter Anzahl. Die bestehende Planung bleibt; die Termine gehen an die Pros mit der geringsten Auslastung.</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="card stack af-step" data-step="2" data-for="auslasten" hidden>
+          <div class="hd"><h3>Priorität</h3><span class="sub">Bis zu 10 Kurstypen, die zuerst verteilt werden (1 = am wichtigsten)</span></div>
           <div class="bd af-opts">
-            <div class="chips" id="af-types"></div>
+            <ol class="af-prio" id="af-prio"></ol>
             <div class="af-row">
-              <label class="check sm"><input type="checkbox" id="af-rules" checked> Regeln zuerst erfüllen</label>
-              <label class="check sm"><input type="checkbox" id="af-free" checked> Freie Tage der Pros beachten</label>
-              <label class="af-date">Von <input type="date" id="af-from" value="2027-01-01" min="2027-01-01" max="2027-12-31"></label>
-              <label class="af-date">Bis <input type="date" id="af-to" value="2027-12-31" min="2027-01-01" max="2027-12-31"></label>
+              <select class="fsel" id="af-prio-add" aria-label="Kurstyp priorisieren"></select>
+              <span class="note" id="af-prio-note"></span>
             </div>
           </div>
         </div>
-        <div class="card stack">
+        <div class="card stack af-step" data-step="2" data-for="auslasten" hidden>
           <div class="hd">
-            <h3>Pros</h3><span class="sub">Ziel = geplante Brutto-Stunden in % der Sollstunden</span>
+            <h3>Übrige Kurstypen</h3><span class="sub">Füllen nach den priorisierten bis zum Ziel auf (abwählen = nicht verwenden)</span>
+            <span class="spacer"></span>
+            <label class="check sm"><input type="checkbox" id="af-rest" checked> Mit übrigen Kurstypen auffüllen</label>
+          </div>
+          <div class="bd"><div class="chips" id="af-types"></div></div>
+        </div>
+        <div class="card stack af-step" data-step="2" data-for="nachplanen" hidden>
+          <div class="hd"><h3>Kurstypen nachplanen</h3><span class="sub">Anhaken und Anzahl angeben (Serien bzw. Einzeltermine)</span></div>
+          <div class="af-scroll">
+            <table class="t af-table">
+              <thead><tr><th></th><th>Kurstyp</th><th>Bereich</th><th>Bisher geplant</th><th>Anzahl</th><th>Ergebnis</th></tr></thead>
+              <tbody id="af-catchup"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card stack af-step" data-step="3" hidden>
+          <div class="hd">
+            <h3>Pros</h3><span class="sub" id="af-pros-sub">Ziel = geplante Brutto-Stunden in % der Sollstunden</span>
             <span class="spacer"></span>
             <label class="af-all">Alle <input type="range" id="af-all" min="0" max="150" step="5" value="65"> <b id="af-all-val">65 %</b></label>
+          </div>
+          <div class="bd af-over" data-for="nachplanen" hidden>
+            <label class="check sm"><input type="checkbox" id="af-over"> Ziel-Auslastung darf überschritten werden</label>
           </div>
           <div class="af-scroll">
             <table class="t af-table">
@@ -323,12 +363,29 @@
             </table>
           </div>
         </div>
-        <div id="af-rule-results" class="rule-list af-rule-results" hidden></div>
+
+        <div class="card stack af-step" data-step="4" hidden>
+          <div class="hd"><h3>Zeitraum &amp; Optionen</h3></div>
+          <div class="bd af-opts">
+            <div class="af-row">
+              <label class="af-date">Von <input type="date" id="af-from" value="2027-01-01" min="2027-01-01" max="2027-12-31"></label>
+              <label class="af-date">Bis <input type="date" id="af-to" value="2027-12-31" min="2027-01-01" max="2027-12-31"></label>
+              <label class="check sm"><input type="checkbox" id="af-rules" checked> Regeln zuerst erfüllen</label>
+              <label class="check sm"><input type="checkbox" id="af-free" checked> Freie Tage der Pros beachten</label>
+            </div>
+            <div class="af-summary" id="af-summary"></div>
+          </div>
+        </div>
+        <div id="af-type-results" class="rule-list af-rule-results af-step" data-step="4" hidden></div>
+        <div id="af-rule-results" class="rule-list af-rule-results af-step" data-step="4" hidden></div>
+
         <div class="actions">
+          <button class="btn" type="button" id="af-back">Zurück</button>
           <span class="note" id="af-note"></span>
           <button class="btn danger" type="button" id="af-clear" title="Alle Termine dieses Plans im Zeitraum löschen (mit Rückgängig)">Alles entfernen</button>
           <button class="btn" type="button" id="af-preview">Vorschau</button>
           <button class="btn primary" type="button" id="af-run">Ausführen</button>
+          <button class="btn primary" type="button" id="af-next">Weiter</button>
         </div>
       </section>
 

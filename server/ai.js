@@ -211,7 +211,7 @@ const LEGACY_TOOLS = [
 
 const AUTOFILL_TOOL = {
   name: "auslasten",
-  description: "Plant automatisch Serien der gewählten Typen, gleichmässig über den Zeitraum verteilt, bis die Pros die Ziel-Auslastung erreichen (Brutto in % der Sollstunden, bestehende Kurse zählen mit). Ohne Überschneidungen. Für grosse Mengen statt events_anlegen.",
+  description: "Plant automatisch Serien der gewählten Typen, gleichmässig über den Zeitraum verteilt, bis die Pros die Ziel-Auslastung erreichen (Brutto in % der Sollstunden, bestehende Kurse zählen mit). Ohne Überschneidungen. Für grosse Mengen statt events_anlegen. prioritaet: bis 10 Typen, die der Reihe nach zuerst verteilt werden. nachplanen: nur diese Typen mit gewünschter Anzahl zusätzlich einplanen (Ziel = Obergrenze, ausser ziel_ueberschreiten).",
   input_schema: {
     type: "object",
     properties: {
@@ -222,6 +222,14 @@ const AUTOFILL_TOOL = {
       bis: { ...DATE, description: "Standard 2027-12-31" },
       freie_tage_beachten: { type: "boolean", description: "freie Wochentage der Pros auslassen" },
       regeln_erfuellen: { type: "boolean", description: "zuerst die Mindest-Stunden der Regeln auffüllen" },
+      prioritaet: { type: "array", items: { type: "string" }, maxItems: 10, description: "Name oder ID, wichtigster zuerst" },
+      uebrige: { type: "boolean", description: "nach den priorisierten mit typen auffüllen (Standard true)" },
+      nachplanen: {
+        type: "array",
+        items: { type: "object", properties: { typ: { type: "string" }, anzahl: { type: "integer" } }, required: ["typ", "anzahl"], additionalProperties: false },
+        description: "Anzahl = Serien bzw. Einzeltermine",
+      },
+      ziel_ueberschreiten: { type: "boolean", description: "nur bei nachplanen" },
       nur_pruefen: CHECK,
     },
     required: ["ziel_prozent"],
@@ -322,7 +330,8 @@ async function runTool(ctx, name, input) {
         ? `${s.pro}: ${s.hinweis}`
         : `${s.pro}: ${s.vorher_prozent}% → ${s.nachher_prozent}% (${Object.entries(s.serien).map(([t, n]) => `${t}×${n}`).join(", ") || "nichts neu"})${s.hinweis ? ` – ${s.hinweis}` : ""}`);
       const ruleLines = (r.regeln || []).map((g) => `${g.id} ${g.erfuellt ? "erfüllt" : "NICHT erfüllt"}: ${g.regel} (${g.vorher} → ${g.nachher})`);
-      return `${r.dryRun ? "Prüfung, nichts gespeichert" : `OK, ${r.created.length} Termine angelegt`}:\n${[...lines, ...ruleLines].join("\n")}`;
+      const typeLines = (r.typen_ergebnis || []).map((t) => `${t.prioritaet ? `Priorität ${t.prioritaet} ` : ""}${t.typ}: ${t.geplant}${t.gewuenscht ? ` von ${t.gewuenscht}` : ""} geplant${t.hinweis ? ` – ${t.hinweis}` : ""}`);
+      return `${r.dryRun ? "Prüfung, nichts gespeichert" : `OK, ${r.created.length} Termine angelegt`}:\n${[...typeLines, ...lines, ...ruleLines].join("\n")}`;
     }
     case "regel_pruefen":
       return (await planning.diagnoseRule(planId, input.regel)).join("\n");

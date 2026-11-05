@@ -874,11 +874,16 @@ function conflictText(konflikte, max = 3) {
 // Typ-Maximum) und die aktiven Regeln, auf Wunsch zusätzlich die freien Wochentage der Pros.
 // Ganz oder gar nicht, eine Transaktion.
 // ziele: [{ pro, prozent }] = eigenes Ziel je Pro (statt ziel_prozent für alle bzw. die Liste pros).
+// prioritaet: bis zu 10 Kurstypen, die der Reihe nach zuerst verteilt werden (je Termin an den Pro mit der
+// geringsten Auslastung im Verhältnis zum Ziel); danach füllen die übrigen Typen (typen) auf, ausser uebrige = false.
+// nachplanen: [{ typ, anzahl }] = nur diese Kurstypen nachträglich verplanen, je die gewünschte Anzahl Serien
+// (bei Einzelterminen Termine); die Ziel-Auslastung gilt als Obergrenze, ausser ziel_ueberschreiten = true.
 // regeln_erfuellen: zuerst die Untergrenzen der aktiven Regeln (mindestens, genau, mehr als) auffüllen,
 // verteilt auf passende Pros mit der geringsten Auslastung im Verhältnis zu ihrem Ziel.
 async function autoFill(
   planId,
-  { pros, ziel_prozent, ziele, typen, von, bis, freie_tage_beachten = false, regeln_erfuellen = false } = {},
+  { pros, ziel_prozent, ziele, typen, von, bis, freie_tage_beachten = false, regeln_erfuellen = false,
+    prioritaet, uebrige = true, nachplanen, ziel_ueberschreiten = false } = {},
   { dryRun = false, userId = null } = {}
 ) {
   const checkPercent = (v) => {
@@ -904,12 +909,22 @@ async function autoFill(
       ? ziele.map((z) => ({ pro: requirePro(z.pro), percent: checkPercent(z.prozent) }))
       : (pros?.length ? pros.map(requirePro) : lk.pros.filter((p) => p.sollstunden > 0))
           .map((pro) => ({ pro, percent: Number(ziel_prozent) }));
-    const types = typen?.length
-      ? typen.map((t) => findType(lk, t) || (() => { throw new PlanningError(`Kurstyp «${t}» nicht gefunden.`); })())
-      : lk.types.filter((t) => t.fixed_start_min !== null);
-    for (const t of types) {
-      if (t.fixed_start_min === null) throw new PlanningError(`«${t.name}» hat keine feste Zeit und lässt sich nicht automatisch verteilen.`);
-    }
+    const typeOf = (t) => {
+      const type = findType(lk, t);
+      if (!type) throw new PlanningError(`Kurstyp «${t}» nicht gefunden.`);
+      if (type.fixed_start_min === null) throw new PlanningError(`«${type.name}» hat keine feste Zeit und lässt sich nicht automatisch verteilen.`);
+      return type;
+    };
+    const catchUp = Array.isArray(nachplanen) && nachplanen.length ? nachplanen.map((n) => {
+      const anzahl = Number(n.anzahl);
+      if (!Number.isInteger(anzahl) || anzahl < 1 || anzahl > 500) throw new PlanningError("Nachplanen: Anzahl bitte als ganze Zahl von 1 bis 500.");
+      return { type: typeOf(n.typ ?? n.type_id), anzahl };
+    }) : null;
+    const priority = catchUp ? [] : [...new Map((Array.isArray(prioritaet) ? prioritaet : []).map(typeOf).map((t) => [t.id, t])).values()];
+    if (priority.length > 10) throw new PlanningError("Höchstens 10 Kurstypen priorisieren.");
+    const rest = catchUp || (!uebrige && priority.length) ? []
+      : (typen?.length ? typen.map(typeOf) : lk.types.filter((t) => t.fixed_start_min !== null)).filter((t) => !priority.some((p) => p.id === t.id));
+    const types = [...(catchUp || []).map((n) => n.type), ...priority, ...rest];
     if (!types.length && !regeln_erfuellen) throw new PlanningError("Keine Kurstypen mit fester Zeit vorhanden.");
 
     // Mögliche Starttage eines Typs (ganze Serie im Zeitraum und im einplanbaren Zeitraum des Typs),
@@ -1072,37 +1087,89 @@ async function autoFill(
       }
     }
 
-    // 2) Ziel-Auslastung je Pro auffüllen
-    const candidates = types.flatMap((t) => candidatesFor(t, from, to))
-      .sort((a, b) => a.date.localeCompare(b.date) || a.type.id - b.type.id);
-    const ordered = spread(candidates);
-    const summary = [];
-    for (const { pro } of targets) {
-      if (!pro.sollstunden) {
-        summary.push({ pro: pro.name, hinweis: "keine Sollstunden" });
-        continue;
-      }
-      const goal = goalOf.get(pro.id);
-      const hasTypes = types.some((t) => areaAllows(t, pro));
-      for (const { type, date } of hasTypes ? ordered : []) {
-        const have = planned.get(pro.id) || 0;
-        if (have >= goal) break;
+    // Eine Serie ab «date» an den passenden Pro mit der geringsten Auslastung im Verhältnis zu seinem Ziel
+    // vergeben. «voll»: kein Pro hat mehr Platz (bei overGoal zählt das Ziel nicht als Grenze).
+    function placeBalanced(type, date, overGoal = false) {
+      const sample = eventsData.planNew(type, { pro_id: 1, date }, planOpts(type));
+      const minutes = seriesMinutes(type, sample.filter(inYear));
+      const ratio = (p) => (planned.get(p.id) || 0) / (overGoal ? p.sollstunden * 60 || 1 : goalOf.get(p.id));
+      const ranked = targets.map(({ pro }) => pro)
+        .filter((p) => areaAllows(type, p) && (overGoal
+          ? p.sollstunden > 0
+          : goalOf.get(p.id) > 0 && (planned.get(p.id) || 0) + minutes <= goalOf.get(p.id) + minutes / 2))
+        .sort((a, b) => ratio(a) - ratio(b));
+      if (!ranked.length) return "voll";
+      for (const pro of ranked) {
         const series = eventsData.planNew(type, { pro_id: pro.id, date }, planOpts(type));
-        const minutes = seriesMinutes(type, series);
-        if (have + minutes > goal + minutes / 2) continue; // nicht deutlich übers Ziel
         if (!fits(type, series, pro)) continue;
         commit(type, series, pro);
+        return "ok";
       }
+      return "passt nicht";
+    }
+    const typeLabel = (t) => (t.code ? `${t.code} · ${t.name}` : t.name);
+    const typen_ergebnis = [];
+    const limitHint = (t) => (t.max_stunden && (typeUsed.get(t.id) || 0) >= t.max_stunden * 60 - 1 ? "Maximum des Kurstyps erreicht" : null);
+
+    if (catchUp) {
+      // 2) Nachplanen: nur die gewählten Kurstypen, je die gewünschte Anzahl
+      for (const { type, anzahl } of catchUp) {
+        let done = 0;
+        let full = false;
+        for (const { date } of spread(candidatesFor(type, from, to))) {
+          if (done >= anzahl) break;
+          const r = placeBalanced(type, date, ziel_ueberschreiten);
+          if (r === "voll") { full = true; break; }
+          if (r === "ok") done++;
+        }
+        typen_ergebnis.push({
+          typ: typeLabel(type), gewuenscht: anzahl, geplant: done,
+          ...(done < anzahl ? { hinweis: limitHint(type) || (full ? "alle passenden Pros haben ihr Ziel erreicht" : "zu wenig freie Termine") } : {}),
+        });
+      }
+    } else {
+      // 2a) Priorisierte Kurstypen der Reihe nach verteilen, solange Pros Platz bis zum Ziel haben
+      for (const [i, type] of priority.entries()) {
+        let done = 0;
+        for (const { date } of spread(candidatesFor(type, from, to))) {
+          const r = placeBalanced(type, date);
+          if (r === "voll") break;
+          if (r === "ok") done++;
+        }
+        typen_ergebnis.push({ prioritaet: i + 1, typ: typeLabel(type), geplant: done, ...(limitHint(type) ? { hinweis: limitHint(type) } : {}) });
+      }
+      // 2b) Ziel-Auslastung je Pro mit den übrigen Kurstypen auffüllen
+      const ordered = spread(rest.flatMap((t) => candidatesFor(t, from, to))
+        .sort((a, b) => a.date.localeCompare(b.date) || a.type.id - b.type.id));
+      for (const { pro } of targets) {
+        if (!pro.sollstunden || !rest.some((t) => areaAllows(t, pro))) continue;
+        const goal = goalOf.get(pro.id);
+        for (const { type, date } of ordered) {
+          const have = planned.get(pro.id) || 0;
+          if (have >= goal) break;
+          const series = eventsData.planNew(type, { pro_id: pro.id, date }, planOpts(type));
+          const minutes = seriesMinutes(type, series);
+          if (have + minutes > goal + minutes / 2) continue; // nicht deutlich übers Ziel
+          if (!fits(type, series, pro)) continue;
+          commit(type, series, pro);
+        }
+      }
+    }
+
+    const summary = targets.map(({ pro }) => {
+      if (!pro.sollstunden) return { pro: pro.name, hinweis: "keine Sollstunden" };
       const have = planned.get(pro.id) || 0;
-      summary.push({
+      const goal = goalOf.get(pro.id);
+      const hasTypes = types.some((t) => areaAllows(t, pro));
+      return {
         pro: pro.name,
         vorher_prozent: Math.round((before.get(pro.id) / 60 / pro.sollstunden) * 1000) / 10,
         nachher_prozent: Math.round((have / 60 / pro.sollstunden) * 1000) / 10,
         serien: Object.fromEntries(perPro.get(pro.id) || []),
         ...(!hasTypes && !perPro.has(pro.id) ? { hinweis: "keine passenden Typen für den Einsatzbereich" }
-          : have < goal * 0.95 ? { hinweis: "Ziel nicht erreicht (zu wenig freie Termine)" } : {}),
-      });
-    }
+          : !catchUp && have < goal * 0.95 ? { hinweis: "Ziel nicht erreicht (zu wenig freie Termine)" } : {}),
+      };
+    });
 
     const hoursOf = (min) => `${Math.round((min / 60) * 100) / 100} h`;
     const percentOf = (r) => (r.total ? `${Math.round((r.on / r.total) * 1000) / 10} %` : "–");
@@ -1137,7 +1204,7 @@ async function autoFill(
           col("series_id"), col("series_index"), toInsert.map(() => userId), planId]
       ));
     }
-    return { created, errors: [], dryRun, summary, regeln };
+    return { created, errors: [], dryRun, summary, regeln, typen_ergebnis };
   });
 }
 
