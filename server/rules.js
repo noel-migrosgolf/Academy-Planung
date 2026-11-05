@@ -3,8 +3,10 @@
 //                Obergrenzen (genau, höchstens) sperren das Einplanen; Untergrenzen erfüllt «Auslasten».
 //   wochentage – «Mindestens <prozent> % der Sollstunden von <Kursen> müssen an <Tagen> stattfinden.»
 //                Wird angezeigt und von «Auslasten» eingehalten, sperrt aber nicht.
-//   ferien     – «<Kurse> finden nicht in den Schulferien (Kanton Zug) statt.» Sperrt Termine in den Ferien;
-//                Serien überspringen Ferienwochen (die Termine rutschen um je eine Woche weiter).
+//   ferien     – modus «ausserhalb»: «<Kurse> finden nicht in den Schulferien (Kanton Zug) statt.»
+//                modus «innerhalb»:  «<Kurse> finden nur in den Schulferien (Kanton Zug) statt.»
+//                Sperrt Termine an nicht erlaubten Tagen; Serien überspringen solche Wochen
+//                (die Termine rutschen um je eine Woche weiter).
 // Gezählt werden Brutto-Stunden über alle Pros; jeder Termin zählt mit seinem eigenen Datum.
 
 const { ValidationError, WEEKDAYS, validDate } = require("./events");
@@ -18,7 +20,8 @@ const OPS = {
   max: { label: "höchstens", ok: (h, z) => h <= z + EPS, upper: true },
 };
 
-const COLUMNS = ["art", "type_id", "type_ids", "von", "bis", "operator", "stunden", "prozent", "wochentage", "aktiv", "notiz"];
+const COLUMNS = ["art", "type_id", "type_ids", "von", "bis", "operator", "stunden", "prozent", "wochentage", "modus", "aktiv", "notiz"];
+const FERIEN_MODI = ["ausserhalb", "innerhalb"];
 
 function isoDate(value, label) {
   const date = String(value || "");
@@ -34,12 +37,14 @@ const typeIdOf = (v) => {
 
 function normalize(body) {
   const base = { aktiv: body.aktiv !== false, notiz: String(body.notiz || "").trim().slice(0, 300) };
-  const empty = { type_id: null, type_ids: null, von: null, bis: null, operator: null, stunden: null, prozent: null, wochentage: null };
+  const empty = { type_id: null, type_ids: null, von: null, bis: null, operator: null, stunden: null, prozent: null, wochentage: null, modus: null };
 
   if (body.art === "ferien") {
     const typeIds = [...new Set((Array.isArray(body.type_ids) ? body.type_ids : []).map(typeIdOf))];
     if (!typeIds.length) throw new ValidationError("Bitte mindestens einen Kurs wählen.");
-    return { ...empty, ...base, art: "ferien", type_ids: typeIds };
+    const modus = body.modus ?? "ausserhalb";
+    if (!FERIEN_MODI.includes(modus)) throw new ValidationError("Schulferien: bitte «ausserhalb» oder «innerhalb» wählen.");
+    return { ...empty, ...base, art: "ferien", type_ids: typeIds, modus };
   }
 
   if (body.art === "wochentage") {
@@ -84,7 +89,8 @@ function daysText(days) {
 function describe(rule, nameOf) {
   if (rule.art === "ferien") {
     const names = rule.type_ids.map(nameOf).filter(Boolean);
-    return `${names.join(", ") || "(Kurs gelöscht)"} ${names.length > 1 ? "finden" : "findet"} nicht in den Schulferien (Kanton Zug) statt`;
+    const where = rule.modus === "innerhalb" ? "nur in" : "nicht in";
+    return `${names.join(", ") || "(Kurs gelöscht)"} ${names.length > 1 ? "finden" : "findet"} ${where} den Schulferien (Kanton Zug) statt`;
   }
   if (rule.art === "wochentage") {
     const names = rule.type_ids.map(nameOf).filter(Boolean);
@@ -94,4 +100,4 @@ function describe(rule, nameOf) {
   return `Zwischen ${day(rule.von)} und ${day(rule.bis)} ${OPS[rule.operator].label} ${rule.stunden} h von ${nameOf(rule.type_id)}`;
 }
 
-module.exports = { OPS, COLUMNS, EPS, normalize, values, describe, daysText };
+module.exports = { OPS, COLUMNS, FERIEN_MODI, EPS, normalize, values, describe, daysText };

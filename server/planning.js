@@ -123,10 +123,22 @@ function holidayOf(date) {
   return FERIEN_ZUG.find((f) => date >= f.start && date <= f.end)?.name || null;
 }
 
-// Hat der Typ im Plan eine aktive Schulferien-Regel? Dann Sperrfunktion für planNew/planUpdate.
+// Verstösst ein Datum gegen eine Schulferien-Regel? Grund als Text oder null.
+function holidayConflict(modus, date) {
+  const holiday = holidayOf(date);
+  if (modus === "innerhalb") return holiday ? null : `findet nur in den Schulferien statt (${formatDate(date)} liegt ausserhalb)`;
+  return holiday ? `findet nicht in den Schulferien statt (${formatDate(date)}: ${holiday})` : null;
+}
+
+// Sperrfunktion für planNew/planUpdate aus den aktiven Schulferien-Regeln eines Typs (oder undefined)
+function blockerOf(rules, typeId) {
+  const modes = [...new Set(rules.filter((r) => r.art === "ferien" && r.type_ids.includes(typeId)).map((r) => r.modus || "ausserhalb"))];
+  if (!modes.length) return undefined;
+  return (date) => modes.map((m) => holidayConflict(m, date)).find(Boolean) || null;
+}
+
 async function blockedFor(db, planId, typeId) {
-  const rules = await loadRules(db, planId);
-  return rules.some((r) => r.art === "ferien" && r.type_ids.includes(typeId)) ? holidayOf : undefined;
+  return blockerOf(await loadRules(db, planId), typeId);
 }
 
 // Eingetragene Abwesenheit des Pros an diesem Datum (oder null)
@@ -486,7 +498,7 @@ const WEEKDAY_INDEX = Object.fromEntries(eventsData.WEEKDAYS.map((d, i) => [d.to
 async function loadRules(db, planId, { activeOnly = true } = {}) {
   const { rows } = await db.query(
     `SELECT r.id, r.plan_id, r.art, r.type_id, r.type_ids, to_char(r.von, 'YYYY-MM-DD') AS von, to_char(r.bis, 'YYYY-MM-DD') AS bis,
-            r.operator, r.stunden, r.prozent, r.wochentage, r.aktiv, r.notiz
+            r.operator, r.stunden, r.prozent, r.wochentage, r.modus, r.aktiv, r.notiz
        FROM rules r WHERE r.plan_id = $1 ${activeOnly ? "AND r.aktiv" : ""} ORDER BY r.art, r.von, r.id`,
     [planId]
   );
@@ -545,13 +557,13 @@ function shareResult(rule, onMinutes, totalMinutes) {
   };
 }
 
-// Termine der Regel-Kurse, die in den Schulferien liegen
+// Termine der Regel-Kurse, die gegen die Regel verstossen (in bzw. ausserhalb der Schulferien)
 async function holidayViolations(db, rule) {
   const { rows } = await db.query(
     "SELECT id, type_id, pro_id, to_char(date, 'YYYY-MM-DD') AS date FROM events WHERE plan_id = $2 AND type_id = ANY($1::int[]) ORDER BY date",
     [rule.type_ids, rule.plan_id]
   );
-  return rows.filter((ev) => holidayOf(ev.date));
+  return rows.filter((ev) => holidayConflict(rule.modus, ev.date));
 }
 
 async function shareOf(db, rule, typeById) {
@@ -597,15 +609,18 @@ async function diagnoseRule(planId, value, db = pool) {
 
   if (rule.art === "ferien") {
     const hits = await holidayViolations(db, rule);
+    const inside = rule.modus === "innerhalb";
     lines.push(hits.length
-      ? `Stand: ${hits.length} Termine liegen in den Schulferien – nicht erfüllt.`
-      : "Stand: kein Termin in den Schulferien – erfüllt.");
+      ? `Stand: ${hits.length} Termine liegen ${inside ? "ausserhalb der" : "in den"} Schulferien – nicht erfüllt.`
+      : `Stand: kein Termin ${inside ? "ausserhalb der" : "in den"} Schulferien – erfüllt.`);
     for (const ev of hits.slice(0, 10)) {
-      lines.push(`${formatDate(ev.date)} (${holidayOf(ev.date)}): ${typeById.get(ev.type_id)?.name} mit ${proName.get(ev.pro_id)}`);
+      lines.push(`${formatDate(ev.date)}${inside ? "" : ` (${holidayOf(ev.date)})`}: ${typeById.get(ev.type_id)?.name} mit ${proName.get(ev.pro_id)}`);
     }
     if (hits.length > 10) lines.push(`… ${hits.length - 10} weitere`);
     if (hits.length) lines.push("Lösung: diese Termine löschen oder verschieben; die Regel gilt für neue Termine, bestehende werden nicht verändert.");
-    lines.push("Neue Serien dieser Kurse überspringen Ferienwochen automatisch (Termine rutschen um eine Woche weiter).");
+    lines.push(inside
+      ? "Neue Serien dieser Kurse überspringen Wochen ausserhalb der Ferien automatisch (Termine rutschen um je eine Woche weiter, bis sie in Ferien liegen)."
+      : "Neue Serien dieser Kurse überspringen Ferienwochen automatisch (Termine rutschen um eine Woche weiter).");
     return lines;
   }
 
@@ -798,7 +813,7 @@ async function planChange(db, planId, existing, type, body) {
         add(konflikte, a, err.message);
       }
       const hit = blocked?.(a.date);
-      if (hit) add(konflikte, a, `«${type.name}» findet nicht in den Schulferien statt (${formatDate(a.date)}: ${hit}).`);
+      if (hit) add(konflikte, a, `«${type.name}» ${hit}.`);
       const [from, to] = [eventsData.weekdayOf(b.date), eventsData.weekdayOf(a.date)];
       if (existing.series_id && from !== to) {
         add(hinweise, a, `liegt neu an einem ${eventsData.WEEKDAYS[to]} (vorher ${eventsData.WEEKDAYS[from]}).`);
@@ -929,7 +944,7 @@ async function autoFill(
 
     // Mögliche Starttage eines Typs (ganze Serie im Zeitraum und im einplanbaren Zeitraum des Typs),
     // in einer Reihenfolge, die den Zeitraum gleichmässig abdeckt.
-    // Kurse mit Schulferien-Regel: kein Start in den Ferien, Serien überspringen Ferienwochen.
+    // Kurse mit Schulferien-Regel: kein Start an gesperrten Tagen, Serien überspringen gesperrte Wochen.
     function candidatesFor(t, rangeFrom, rangeTo) {
       const start = t.einplanbar_von && t.einplanbar_von > rangeFrom ? t.einplanbar_von : rangeFrom;
       const end = t.einplanbar_bis && t.einplanbar_bis < rangeTo ? t.einplanbar_bis : rangeTo;
@@ -968,8 +983,8 @@ async function autoFill(
     const nameOf = (id) => typeById.get(id)?.name;
     const rules = allRules.filter((r) => r.art === "stunden").map((r) => ({ ...r, type: typeById.get(r.type_id) }));
     // Anteil-Regeln (Wochentage): Brutto-Minuten an den gewählten Tagen und insgesamt
-    const blockedTypes = new Set(allRules.filter((r) => r.art === "ferien").flatMap((r) => r.type_ids));
-    const planOpts = (t) => (blockedTypes.has(t.id) ? { blocked: holidayOf } : {});
+    const blockers = new Map(lk.types.map((t) => [t.id, blockerOf(allRules, t.id)]));
+    const planOpts = (t) => (blockers.get(t.id) ? { blocked: blockers.get(t.id) } : {});
     const shareRules = allRules.filter((r) => r.art === "wochentage")
       .map((r) => ({ ...r, ids: new Set(r.type_ids), days: new Set(r.wochentage), on: 0, total: 0 }));
     const shareAdd = (rule, list) => {

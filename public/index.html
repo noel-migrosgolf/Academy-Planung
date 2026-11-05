@@ -443,8 +443,13 @@
             </div>
             <div class="rule-sentence rule-share" id="rule-s-ferien" hidden>
               <div class="chips rule-type-chips"></div>
-              <span>finden nicht in den Schulferien des Kantons Zug statt.</span>
-              <p class="note">Termine in den Ferien werden abgelehnt; Serien überspringen Ferienwochen (die Termine rutschen um je eine Woche weiter). Feiertage zählen nicht dazu.</p>
+              <span>finden</span>
+              <select name="modus" class="fsel" aria-label="Schulferien">
+                <option value="ausserhalb">nur ausserhalb der Schulferien</option>
+                <option value="innerhalb">nur in den Schulferien</option>
+              </select>
+              <span>des Kantons Zug statt.</span>
+              <p class="note">Termine an nicht erlaubten Tagen werden abgelehnt; Serien überspringen solche Wochen (die Termine rutschen um je eine Woche weiter). Feiertage zählen nicht als Schulferien.</p>
             </div>
             <p class="form-error" role="alert"></p>
             <div class="actions">

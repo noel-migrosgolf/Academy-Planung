@@ -49,11 +49,16 @@
     return t.series_times.map(([a, b]) => `${clock(a)}–${clock(b)}`).join(" · ");
   }
 
-  // Schulferien (Kanton Zug): Kurse mit Schulferien-Regel überspringen Ferienwochen (wie server/events.js)
+  // Schulferien (Kanton Zug): Kurse mit Schulferien-Regel überspringen gesperrte Wochen (wie server/events.js)
   const FERIEN = (window.FERIEN_ZUG || []).filter((f) => f.type === "ferien");
   function holidayOf(date) {
     const iso = D.isoKey(date);
     return FERIEN.find((f) => iso >= f.start && iso <= f.end)?.name || null;
+  }
+
+  // Gesperrt: «ausserhalb» = Tag liegt in den Ferien, «innerhalb» = Tag liegt ausserhalb der Ferien
+  function holidayBlocked(t, date) {
+    return (data.holidayTypes?.get(t.id) || []).some((m) => (m === "innerhalb" ? !holidayOf(date) : !!holidayOf(date)));
   }
 
   function seriesDates(t, first) {
@@ -61,7 +66,7 @@
     const dates = [first];
     for (let i = 1; i < t.series_offsets.length; i++) {
       let date = D.addDays(dates[i - 1], t.series_offsets[i] - t.series_offsets[i - 1]);
-      for (let guard = 0; holidayOf(date) && guard < 60; guard++) date = D.addDays(date, 7);
+      for (let guard = 0; holidayBlocked(t, date) && guard < 60; guard++) date = D.addDays(date, 7);
       dates.push(date);
     }
     return dates;

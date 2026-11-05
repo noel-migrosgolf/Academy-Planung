@@ -167,11 +167,14 @@ async function migrate() {
       ADD COLUMN IF NOT EXISTS type_ids   INTEGER[],
       ADD COLUMN IF NOT EXISTS prozent    REAL,
       ADD COLUMN IF NOT EXISTS wochentage INTEGER[],
+      ADD COLUMN IF NOT EXISTS modus      TEXT,
       ALTER COLUMN type_id  DROP NOT NULL,
       ALTER COLUMN von      DROP NOT NULL,
       ALTER COLUMN bis      DROP NOT NULL,
       ALTER COLUMN operator DROP NOT NULL,
       ALTER COLUMN stunden  DROP NOT NULL;
+    -- Schulferien-Regeln: «ausserhalb» (nicht in den Ferien, bisher einzige Art) oder «innerhalb» (nur in den Ferien)
+    UPDATE rules SET modus = 'ausserhalb' WHERE art = 'ferien' AND modus IS NULL;
   `);
 
   // Pläne: jeder Benutzer kann mehrere Pläne haben und sie teilen (ansehen oder bearbeiten).

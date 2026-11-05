@@ -194,8 +194,11 @@
       toast(err.message);
       return;
     }
-    // Kurse mit aktiver Schulferien-Regel (für die Serien-Vorschau im Kurs-Dialog)
-    const holidayTypes = new Set(rules.filter((r) => r.aktiv && r.art === "ferien").flatMap((r) => r.type_ids));
+    // Kurse mit aktiver Schulferien-Regel: Typ-ID → Modi «ausserhalb»/«innerhalb» (für die Serien-Vorschau im Kurs-Dialog)
+    const holidayTypes = new Map();
+    for (const r of rules.filter((x) => x.aktiv && x.art === "ferien")) {
+      for (const id of r.type_ids) holidayTypes.set(id, [...new Set([...(holidayTypes.get(id) || []), r.modus || "ausserhalb"])]);
+    }
     const data = { pros, types, events, holidayTypes };
     Events.setData(data);
     Planner.setData(data);

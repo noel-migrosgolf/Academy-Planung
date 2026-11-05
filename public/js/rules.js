@@ -1,7 +1,7 @@
 // Regeln (Reiter «Regeln»), zwei Arten:
 //   stunden    – «Zwischen Datum x und y müssen <Vergleich> z Sollstunden von Kurs k stattfinden.»
 //   wochentage – «Mindestens x % der Sollstunden von Kursen … müssen an Tagen … stattfinden.»
-//   ferien     – «Kurse … finden nicht in den Schulferien des Kantons Zug statt.»
+//   ferien     – «Kurse … finden nur ausserhalb der bzw. nur in den Schulferien des Kantons Zug statt.»
 // Regeln gehören zum aktuellen Plan; anlegen, bearbeiten, (de)aktivieren und löschen darf, wer den Plan bearbeiten darf.
 (function () {
   const { el } = window.Dates;
@@ -35,7 +35,8 @@
 
   function meterOf(r) {
     if (r.art === "ferien") {
-      return { fill: r.erfuellt ? 100 : 0, text: r.erfuellt ? "kein Termin in den Ferien" : `${r.ist_termine} Termine in den Ferien` };
+      const where = r.modus === "innerhalb" ? "ausserhalb der Ferien" : "in den Ferien";
+      return { fill: r.erfuellt ? 100 : 0, text: r.erfuellt ? `kein Termin ${where}` : `${r.ist_termine} Termine ${where}` };
     }
     if (r.art === "wochentage") {
       return {
@@ -172,6 +173,7 @@
     if (r.art === "ferien") {
       selTypes.clear();
       r.type_ids.forEach((id) => selTypes.add(id));
+      f.modus.value = r.modus || "ausserhalb";
       renderTypeChips();
     } else if (r.art === "wochentage") {
       f.prozent.value = r.prozent;
@@ -200,6 +202,7 @@
     $("#rule-form .form-error").textContent = "";
     f.stunden.value = "";
     f.prozent.value = "";
+    f.modus.value = "ausserhalb";
     selTypes.clear();
     selDays.clear();
     renderTypeChips();
@@ -212,7 +215,7 @@
   function readForm() {
     const f = $("#rule-form").elements;
     const base = { aktiv: editing ? editing.aktiv : true, notiz: editing?.notiz || "" };
-    if (kind === "ferien") return { ...base, art: "ferien", type_ids: [...selTypes] };
+    if (kind === "ferien") return { ...base, art: "ferien", type_ids: [...selTypes], modus: f.modus.value };
     if (kind === "wochentage") {
       return {
         ...base,
