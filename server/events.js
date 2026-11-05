@@ -259,13 +259,14 @@ const SYNC_FIXED_EVENTS_SQL = `
 // Daten aller Termine einer Serie ab dem Starttag. blocked(datum) (optional, z. B. Schulferien-Regel)
 // gibt die Ferienbezeichnung zurück: Der Start darf nicht darin liegen, spätere Termine rutschen samt
 // allen folgenden um je eine Woche weiter, bis sie ausserhalb liegen.
-function seriesDates(type, start, blocked) {
+// from: ab welchem Termin (0-basiert) gerechnet wird, start ist dann dessen Datum (Serie ab hier verschieben)
+function seriesDates(type, start, blocked, from = 0) {
   const offsets = type.series_offsets;
-  if (!blocked) return offsets.map((offset) => addDays(start, offset));
+  if (!blocked) return offsets.slice(from).map((offset) => addDays(start, offset - offsets[from]));
   const hit = blocked(start);
   if (hit) throw new ValidationError(`«${type.name}» findet nicht in den Schulferien statt (${formatDate(start)}: ${hit}).`);
   const dates = [start];
-  for (let i = 1; i < offsets.length; i++) {
+  for (let i = from + 1; i < offsets.length; i++) {
     let date = addDays(dates[i - 1], offsets[i] - offsets[i - 1]);
     for (let guard = 0; blocked(date); guard++) {
       if (guard > 60) throw new ValidationError(`«${type.name}»: kein Termin ausserhalb der Schulferien gefunden.`);
@@ -274,6 +275,24 @@ function seriesDates(type, start, blocked) {
     dates.push(date);
   }
   return dates;
+}
+
+// Neue Daten beim Verschieben einer Serie: Termin «index» (1-basiert) kommt auf «date»; verschoben werden
+// bei «folgende» dieser und alle späteren Termine, bei «alle» die ganze Serie um dieselbe Anzahl Tage
+// ab Termin 1. Die Abstände der Serie (und das Überspringen der Schulferien) werden neu angewendet;
+// einzeln verschobene Termine im betroffenen Bereich rücken dabei wieder ins Muster.
+// termine: alle Termine der Serie; liefert Map series_index → Datum.
+function movedSeriesDates(type, termine, index, date, scope, blocked) {
+  const sorted = [...termine].sort((a, b) => a.series_index - b.series_index);
+  const current = sorted.find((t) => t.series_index === index);
+  const delta = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${current.date}T00:00:00Z`)) / 86400000);
+  const fromIndex = scope === "alle" ? sorted[0].series_index : index;
+  const start = scope === "alle" ? addDays(sorted[0].date, delta) : date;
+  const moved = sorted.filter((t) => t.series_index >= fromIndex);
+  const fits = type.series_offsets.length === sorted.length && sorted.every((t, i) => t.series_index === i + 1);
+  // Passt die Serie nicht mehr zum Kurstyp (Termine geändert), alle betroffenen Termine einfach mitschieben
+  const dates = fits ? seriesDates(type, start, blocked, fromIndex - 1) : moved.map((t) => addDays(t.date, delta));
+  return new Map(moved.map((t, i) => [t.series_index, dates[i]]));
 }
 
 // Neuer Kurs bzw. neue Serie: berechnet alle Termine aus Typ und Eingabe.
@@ -307,8 +326,11 @@ function planNew(type, body, opts = {}) {
 // nur Pro und Notiz lassen sich pro Termin ändern.
 function planUpdate(existing, type, body, opts = {}) {
   const notiz = String(body.notiz || "").trim().slice(0, 500);
+  // Serien-Termin: Pro, Notiz und Datum (verschieben); die Zeit bleibt die des Termins.
+  // Zeitraum, Schulferien und Belegung prüft planning.planChange für alle betroffenen Termine.
   if (existing.series_id) {
-    return { ...existing, pro_id: id(body.pro_id, "Pro"), notiz };
+    const date = empty(body.date) ? existing.date : isoDate(body.date);
+    return { ...existing, pro_id: id(body.pro_id, "Pro"), date, notiz };
   }
   if (type.series_offsets.length > 1) {
     throw new ValidationError("Ein Serien-Typ kann nur neu angelegt werden, nicht aus einem bestehenden Kurs.");
@@ -325,5 +347,5 @@ function planUpdate(existing, type, body, opts = {}) {
 
 module.exports = {
   SEED_TYPES, SEED_SERIES_TYPES, TYPE_COLUMNS, WEEKDAYS, AREAS, ValidationError,
-  normalizeType, typeValues, planNew, planUpdate, seriesDates, id, addDays, weekdayOf, assertWindow, validDate, SYNC_FIXED_EVENTS_SQL,
+  normalizeType, typeValues, planNew, planUpdate, seriesDates, movedSeriesDates, id, addDays, weekdayOf, assertWindow, validDate, SYNC_FIXED_EVENTS_SQL,
 };

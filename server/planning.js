@@ -448,21 +448,16 @@ async function bulkUpdate(planId, changes, { dryRun = false } = {}) {
       const type = current.series_id ? lk.types.find((t) => t.id === current.type_id) : findType(lk, c.typ ?? current.type_id);
       if (!type) throw new PlanningError(`${label}Kurstyp «${c.typ}» nicht gefunden.`);
       const has = (v) => v !== null && v !== undefined && v !== "";
-      const ev = eventsData.planUpdate(current, type, {
+      const plan = await planChange(db, planId, current, type, {
         type_id: type.id,
         pro_id: has(c.pro) ? requirePro(lk, c.pro, label) : current.pro_id,
         date: has(c.datum) ? c.datum : current.date,
         start_min: has(c.von) ? timeArg(c.von) : current.start_min,
         end_min: has(c.bis) ? timeArg(c.bis) : current.end_min,
         notiz: c.notiz ?? current.notiz,
-      }, { blocked: await blockedFor(db, planId, type.id) });
-      await assertArea(db, type, [ev.pro_id], label);
-      const before = type.id === current.type_id ? minutesOf(current, type, "brutto") : 0;
-      await assertAvailable(db, [ev], label);
-      await assertCapacity(db, planId, type, minutesOf(ev, type, "brutto") - before, label);
-      await assertRules(db, planId, type, [ev], type.id === current.type_id ? [current] : [], label);
-      await assertFree(db, planId, ev, id, label);
-      if (!current.series_id) await assertNotParallel(db, planId, type, [ev], label);
+      });
+      if (plan.konflikte.length) throw new PlanningError(`${label}${conflictText(plan.konflikte)}`);
+      const ev = plan.changes[0].after;
       const { rows: done } = await db.query(
         `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
           WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
@@ -740,6 +735,137 @@ async function assertRules(db, planId, type, added, removed = [], label = "") {
       );
     }
   }
+}
+
+// --- Kurs ändern bzw. verschieben (Dialog, API, KI) ---
+
+// Berechnet die Änderung eines Kurses. Bei Serien-Terminen gilt sie wahlweise auch für die folgenden
+// («folgende») bzw. alle Termine («alle»): Pro und Datum werden übernommen (beim Verschieben nach dem
+// Muster der Serie, siehe events.movedSeriesDates), die Notiz gilt nur für den bearbeiteten Termin.
+// Prüft alle betroffenen Termine und sammelt sämtliche Konflikte (statt beim ersten abzubrechen),
+// damit der Dialog sie vor dem Speichern zeigen kann. hinweise sperren nicht (z. B. anderer Wochentag).
+async function planChange(db, planId, existing, type, body) {
+  const scope = existing.series_id && (body.serie === "folgende" || body.serie === "alle") ? body.serie : "";
+  const blocked = await blockedFor(db, planId, type.id);
+  const konflikte = [];
+  const hinweise = [];
+  const add = (list, ev, text) => {
+    if (!list.some((k) => k.text === text)) list.push({ termin: ev?.series_index ?? null, text });
+  };
+  const main = eventsData.planUpdate(existing, type, body, { blocked });
+  const changes = [{ before: existing, after: main }];
+
+  if (existing.series_id) {
+    const { rows: siblings } = await db.query(
+      `SELECT ${EVENT_FIELDS} FROM events WHERE plan_id = $1 AND series_id = $2 ORDER BY series_index FOR UPDATE`,
+      [planId, existing.series_id]
+    );
+    let dates = null;
+    if (scope && main.date !== existing.date) {
+      try {
+        dates = eventsData.movedSeriesDates(type, siblings, existing.series_index, main.date, scope, blocked);
+        main.date = dates.get(existing.series_index);
+      } catch (err) {
+        if (!(err instanceof eventsData.ValidationError)) throw err;
+        add(konflikte, null, err.message);
+      }
+    }
+    if (scope) {
+      for (const s of siblings) {
+        if (s.id === existing.id || (scope === "folgende" && s.series_index < existing.series_index)) continue;
+        const after = { ...s, pro_id: main.pro_id, date: dates?.get(s.series_index) ?? s.date };
+        if (after.pro_id !== s.pro_id || after.date !== s.date) changes.push({ before: s, after });
+      }
+      changes.sort((a, b) => a.before.series_index - b.before.series_index);
+    }
+  }
+
+  const ids = changes.map((c) => c.before.id);
+  const { rows: pros } = await db.query("SELECT id, name, abwesenheiten, kurse, bambinitraining, gce_training FROM pros WHERE id = ANY($1::int[])",
+    [[...new Set(changes.map((c) => c.after.pro_id))]]);
+  const proById = new Map(pros.map((p) => [p.id, p]));
+  const area = eventsData.AREAS[type.einsatzbereich];
+  const timed = []; // Termine mit neuem Datum, neuer Zeit oder neuem Typ
+  for (const { before: b, after: a } of changes) {
+    const moved = a.date !== b.date;
+    const retimed = moved || a.start_min !== b.start_min || a.end_min !== b.end_min || a.type_id !== b.type_id;
+    const pro = proById.get(a.pro_id);
+    if (!pro) add(konflikte, a, "Pro existiert nicht.");
+    if (moved) {
+      try {
+        eventsData.assertWindow(type, [a.date]);
+      } catch (err) {
+        add(konflikte, a, err.message);
+      }
+      const hit = blocked?.(a.date);
+      if (hit) add(konflikte, a, `«${type.name}» findet nicht in den Schulferien statt (${formatDate(a.date)}: ${hit}).`);
+      const [from, to] = [eventsData.weekdayOf(b.date), eventsData.weekdayOf(a.date)];
+      if (existing.series_id && from !== to) {
+        add(hinweise, a, `liegt neu an einem ${eventsData.WEEKDAYS[to]} (vorher ${eventsData.WEEKDAYS[from]}).`);
+      }
+    }
+    if (!pro) continue;
+    if (a.pro_id !== b.pro_id && area && !pro[area.proField]) add(konflikte, a, `«${pro.name}» ist nicht im Einsatzbereich ${area.label}.`);
+    if (moved || a.pro_id !== b.pro_id) {
+      const absence = absenceOn(pro, a.date);
+      if (absence) add(konflikte, a, `«${pro.name}» ist am ${formatDate(a.date)} abwesend${absence.grund ? ` (${absence.grund})` : ""}.`);
+    }
+    if (retimed || a.pro_id !== b.pro_id) {
+      const { rows: busy } = await db.query(
+        `SELECT t.name, e.start_min, e.end_min, e.series_id, e.series_index FROM events e JOIN event_types t ON t.id = e.type_id
+          WHERE e.plan_id = $1 AND e.pro_id = $2 AND e.date = $3 AND e.start_min < $5 AND e.end_min > $4 AND e.id <> ALL($6::int[])
+          ORDER BY e.start_min LIMIT 1`,
+        [planId, a.pro_id, a.date, a.start_min, a.end_min, ids]
+      );
+      const other = changes.find((c) => c.after !== a && c.after.pro_id === a.pro_id && c.after.date === a.date
+        && c.after.start_min < a.end_min && a.start_min < c.after.end_min);
+      if (busy[0] && existing.series_id && busy[0].series_id === existing.series_id) {
+        add(konflikte, a, `überschneidet sich am ${formatDate(a.date)} mit Termin ${busy[0].series_index} derselben Serie.`);
+      } else if (busy[0]) {
+        add(konflikte, a, `${pro.name} hat am ${formatDate(a.date)} ${clock(busy[0].start_min)}–${clock(busy[0].end_min)} bereits «${busy[0].name}».`);
+      } else if (other && other.before.series_index < a.series_index) {
+        add(konflikte, a, `überschneidet sich am ${formatDate(a.date)} mit Termin ${other.before.series_index} derselben Serie.`);
+      }
+    }
+    if (retimed) timed.push({ before: b, after: a });
+  }
+
+  if (timed.length && type.nicht_parallel?.length) {
+    for (const { after: a } of timed) {
+      const { rows } = await db.query(
+        `SELECT t.name, p.name AS pro, e.start_min, e.end_min
+           FROM events e JOIN event_types t ON t.id = e.type_id JOIN pros p ON p.id = e.pro_id
+          WHERE e.plan_id = $1 AND e.date = $2 AND e.start_min < $4 AND e.end_min > $3
+            AND e.type_id = ANY($5::int[]) AND e.id <> ALL($6::int[])
+          ORDER BY e.start_min LIMIT 1`,
+        [planId, a.date, a.start_min, a.end_min, type.nicht_parallel, ids]
+      );
+      if (rows[0]) {
+        const r = rows[0];
+        add(konflikte, a, `darf nicht parallel zu «${r.name}» stattfinden: am ${formatDate(a.date)} ist ${clock(r.start_min)}–${clock(r.end_min)} bereits «${r.name}» (${r.pro}) geplant.`);
+      }
+    }
+  }
+  if (timed.length) {
+    const sameType = (c) => c.before.type_id === type.id;
+    try {
+      await assertRules(db, planId, type, timed.map((c) => c.after), timed.filter(sameType).map((c) => c.before));
+      if (!existing.series_id) {
+        const before = sameType(changes[0]) ? minutesOf(existing, type, "brutto") : 0;
+        await assertCapacity(db, planId, type, minutesOf(main, type, "brutto") - before);
+      }
+    } catch (err) {
+      if (!(err instanceof eventsData.ValidationError)) throw err;
+      add(konflikte, null, err.message);
+    }
+  }
+  return { changes, konflikte, hinweise };
+}
+
+// Konflikte als ein Satz (für Fehlermeldungen); «Termin n:» bei Serien
+function conflictText(konflikte, max = 3) {
+  const text = konflikte.slice(0, max).map((k) => `${k.termin ? `Termin ${k.termin}: ` : ""}${k.text}`).join(" ");
+  return konflikte.length > max ? `${text} (und ${konflikte.length - max} weitere Konflikte)` : text;
 }
 
 // Plant für jeden Pro Serien der gewählten Typen, bis die Ziel-Auslastung (brutto in % der Sollstunden,
@@ -1101,6 +1227,6 @@ async function describeEvents(list) {
 
 module.exports = {
   TYPE_FIELDS, EVENT_FIELDS, PlanningError,
-  loadType, assertFree, assertNotParallel, syncNotParallel, assertArea, assertAvailable, blockedFor, assertCapacity, assertRules, ruleStatus, diagnoseRule, formatDate, clock, timeArg, minutesOf,
+  loadType, assertFree, assertNotParallel, syncNotParallel, planChange, conflictText, assertArea, assertAvailable, blockedFor, assertCapacity, assertRules, ruleStatus, diagnoseRule, formatDate, clock, timeArg, minutesOf,
   overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, autoFill, undoChange, describeEvents,
 };

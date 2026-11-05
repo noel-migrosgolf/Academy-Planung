@@ -590,10 +590,10 @@
           </label>
         </div>
         <p class="note" id="event-fixed-hint" hidden>Die Zeit ist durch den Kurstyp fest vorgegeben (inkl. Puffer am Ende).</p>
-        <label id="event-scope-wrap" hidden>Pro übernehmen für
+        <label id="event-scope-wrap" hidden>Änderung (Pro, Datum) gilt für
           <select name="serie" class="fsel" id="event-scope"></select>
         </label>
-        <p class="note" id="event-series-note" hidden>Datum und Zeit sind durch die Serie festgelegt. Die Notiz gilt nur für diesen Termin.</p>
+        <p class="note" id="event-series-note" hidden>Die Zeit ist durch die Serie festgelegt. Wird ab diesem Termin bzw. die ganze Serie verschoben, gelten wieder die Abstände der Serie (Schulferien werden übersprungen). Die Notiz gilt nur für diesen Termin.</p>
         <div class="series" id="event-series" hidden>
           <div class="series-summary" id="event-series-summary"></div>
           <details id="event-series-more">
@@ -602,6 +602,7 @@
           </details>
         </div>
         <div class="preview" id="event-preview"></div>
+        <div class="move-check" id="event-check" hidden></div>
         <label>Notiz
           <input name="notiz" type="text" maxlength="500" placeholder="optional">
         </label>

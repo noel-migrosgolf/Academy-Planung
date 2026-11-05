@@ -66,7 +66,7 @@ Die Planung betrifft immer das Jahr 2027: Datumsangaben ohne Jahr meinen 2027, u
 
 Daten
 - Pros haben Sollstunden pro Jahr. Auslastung = geplante Brutto-Stunden / Sollstunden.
-- Kurstypen: Brutto zählt gegen die Sollstunden, Netto ist Unterrichtszeit, der Puffer liegt am Ende. Ein Typ kann eine feste Zeit und einen festen Wochentag für den ersten Termin vorgeben. Serien-Typen legen mehrere Termine an (Abstände in Tagen ab dem ersten Termin); bei Serien sind pro Termin nur Pro und Notiz änderbar. Gib bei Serien mit «pros» pro Termin einen eigenen Pro an.
+- Kurstypen: Brutto zählt gegen die Sollstunden, Netto ist Unterrichtszeit, der Puffer liegt am Ende. Ein Typ kann eine feste Zeit und einen festen Wochentag für den ersten Termin vorgeben. Serien-Typen legen mehrere Termine an (Abstände in Tagen ab dem ersten Termin); bei Serien sind pro Termin Pro, Notiz und Datum (Termin verschieben) änderbar, die Zeit bleibt; events_aendern meldet Konflikte (belegt, Abwesenheit, Ferien, nicht parallel, Regeln). Gib bei Serien mit «pros» pro Termin einen eigenen Pro an.
 - Ein Pro kann keine zwei überschneidenden Kurse haben.
 - Kurstypen können «nicht parallel zu» anderen Kurstypen sein (daten_lesen, letzte Spalte): dann dürfen sich deren Termine im Plan zeitlich nicht überschneiden, auch nicht bei verschiedenen Pros. Das Tool lehnt solche Termine ab; auslasten hält es ein.
 - Kurstypen können einen einplanbaren Zeitraum und ein Maximum an Sollstunden (brutto, über alle Pros zusammen) haben; daten_lesen zeigt beides.

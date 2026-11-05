@@ -281,6 +281,70 @@
     updatePreview();
   }
 
+  // Formular → Anfrage (anlegen bzw. ändern)
+  function eventBody() {
+    const f = $("#event-form").elements;
+    const body = {
+      type_id: Number(f.type_id.value),
+      pro_id: Number(f.pro_id.value),
+      date: f.date.value,
+      start_min: f.start.value ? parseClock(f.start.value) : null,
+      end_min: f.end.value ? parseClock(f.end.value) : null,
+      notiz: f.notiz.value,
+    };
+    if (editingEvent?.series_id && f.serie.value) body.serie = f.serie.value;
+    return body;
+  }
+
+  // Bestehenden Kurs ändern: Probelauf beim Server, zeigt betroffene Termine und Konflikte vor dem Speichern
+  let checkTimer = null;
+  let checkSeq = 0;
+  function scheduleCheck() {
+    clearTimeout(checkTimer);
+    if (!editingEvent) return;
+    checkTimer = setTimeout(runCheck, 250);
+  }
+
+  async function runCheck() {
+    const box = $("#event-check");
+    const save = $("#event-form button[type=submit]");
+    const body = eventBody();
+    const seq = ++checkSeq;
+    let r;
+    try {
+      if (!body.date || body.start_min === null || body.end_min === null) throw new Error("");
+      r = await ctx.api(`/events/${editingEvent.id}`, { method: "PUT", body: { ...body, dry_run: true } });
+    } catch {
+      if (seq === checkSeq) box.hidden = true;
+      return;
+    }
+    if (seq !== checkSeq || !$("#dlg-event").open) return;
+    const proName = (id) => data.pros.find((p) => p.id === id)?.name || "?";
+    const changed = r.termine.filter((t) => t.datum !== t.datum_vorher || t.pro !== t.pro_vorher
+      || t.zeit[0] !== t.zeit_vorher[0] || t.zeit[1] !== t.zeit_vorher[1]);
+    box.replaceChildren();
+    box.hidden = !changed.length && !r.konflikte.length;
+    box.classList.toggle("bad", r.konflikte.length > 0);
+    save.disabled = r.konflikte.length > 0;
+    if (box.hidden) return;
+    const series = !!editingEvent.series_id;
+    if (changed.length) box.append(el("div", "mc-hd", series ? `Betroffene Termine (${changed.length})` : "Änderung"));
+    for (const t of changed) {
+      const parts = [];
+      if (t.datum !== t.datum_vorher) parts.push(`${shortDate(D.parseDate(t.datum_vorher))} → ${shortDate(D.parseDate(t.datum))}`);
+      else parts.push(shortDate(D.parseDate(t.datum)));
+      if (t.zeit[0] !== t.zeit_vorher[0] || t.zeit[1] !== t.zeit_vorher[1]) parts.push(`${clock(t.zeit[0])}–${clock(t.zeit[1])}`);
+      if (t.pro !== t.pro_vorher) parts.push(`${proName(t.pro_vorher)} → ${proName(t.pro)}`);
+      const row = el("div", "mc-row");
+      row.append(el("span", "n", series ? `Termin ${t.termin}` : "Kurs"), el("span", "", parts.join(" · ")));
+      box.append(row);
+    }
+    const label = (k) => (k.termin && series ? `Termin ${k.termin}: ` : "");
+    for (const k of r.konflikte) box.append(el("div", "mc-bad", `⚠ ${label(k)}${k.text}`));
+    for (const k of r.hinweise) box.append(el("div", "mc-hint", `${label(k)}${k.text}`));
+    if (!r.konflikte.length) box.append(el("div", "mc-ok", "✓ Keine Konflikte"));
+  }
+
   // event: bestehender Kurs bearbeiten; prefill: { pro_id, date, start_min, end_min } für ein neues
   function openEvent(event, prefill = {}) {
     if (!event && !ctx.canEdit()) {
@@ -305,7 +369,7 @@
     const series = !!event?.series_id;
     const t = event ? typeOf(event) : null;
     $("#event-title").textContent = series
-      ? `${t?.name || "Serie"} · Termin ${event.series_index} von ${t?.series_offsets.length ?? "?"}`
+      ? `${t?.name || "Serie"} · Termin ${event.series_index} von ${seriesOf(event).length}`
       : event ? "Kurs bearbeiten" : "Neuer Kurs";
     $("#event-delete").hidden = !event;
     $("#event-delete").textContent = series ? "Serie löschen" : "Löschen";
@@ -337,8 +401,11 @@
     f.end.value = clock(v.end_min ?? 10 * 60);
     f.notiz.value = v.notiz || "";
     f.type_id.disabled = series;
-    f.date.disabled = series;
     applyType({ adjustDate: !event });
+    $("#event-check").hidden = true;
+    $("#event-form button[type=submit]").disabled = false;
+    clearTimeout(checkTimer);
+    checkSeq++;
     $("#dlg-event").showModal();
   }
 
@@ -656,18 +723,15 @@
     });
     ["start", "end"].forEach((n) => ef.elements[n].addEventListener("input", updatePreview));
 
+    ["type_id", "pro_id", "date", "start", "end", "serie"].forEach((n) => {
+      ef.elements[n].addEventListener("input", scheduleCheck);
+      ef.elements[n].addEventListener("change", scheduleCheck);
+    });
+
     ef.addEventListener("submit", async (e) => {
       e.preventDefault();
       const f = ef.elements;
-      const body = {
-        type_id: Number(f.type_id.value),
-        pro_id: Number(f.pro_id.value),
-        date: f.date.value,
-        start_min: f.start.value ? parseClock(f.start.value) : null,
-        end_min: f.end.value ? parseClock(f.end.value) : null,
-        notiz: f.notiz.value,
-      };
-      if (editingEvent?.series_id && f.serie.value) body.serie = f.serie.value;
+      const body = eventBody();
       const perTermin = [...document.querySelectorAll("#event-series-rows select")];
       if (!editingEvent && perTermin.length) body.pros = perTermin.map((s) => (s.value ? Number(s.value) : null));
       try {
@@ -678,7 +742,7 @@
         $("#dlg-event").close();
         const count = result.events?.length || 1;
         ctx.toast(editingEvent
-          ? count > 1 ? `Pro für ${count} Termine der Serie übernommen` : "Kurs gespeichert"
+          ? count > 1 ? `${count} Termine der Serie geändert` : "Kurs gespeichert"
           : count > 1 ? `Serie mit ${count} Terminen erstellt` : "Kurs erstellt");
         ctx.reload();
       } catch (err) {

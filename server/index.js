@@ -346,46 +346,52 @@ api.post("/events", ...edit, versioned(async (req, b) => `Geplant: ${await descr
   })
 );
 
-api.put("/events/:id", ...edit, versioned(async (req, b) => `Geändert: ${await describeEvents(b.events)}`), (req, res) =>
+// Kurs ändern bzw. verschieben. Serien-Termine: serie = "folgende" | "alle" übernimmt Pro und Datum
+// auch für die folgenden bzw. alle Termine. dry_run = nur prüfen: liefert die betroffenen Termine
+// (vorher/nachher) und alle Konflikte, ohne zu speichern (Vorschau im Dialog).
+api.put("/events/:id", ...edit, versioned(async (req, b) => (b.dry_run ? null : `Geändert: ${await describeEvents(b.events)}`)), (req, res) =>
   inTransaction(res, async (db) => {
     const eventId = Number.parseInt(req.params.id, 10) || 0;
     const planId = req.plan.id;
+    const dryRun = req.body.dry_run === true;
     const { rows } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE id = $1 AND plan_id = $2 FOR UPDATE`, [eventId, planId]);
     if (!rows[0]) return res.status(404).json({ error: "Kurs nicht gefunden." });
     const typeId = rows[0].series_id ? rows[0].type_id : eventsData.id(req.body.type_id, "Kurstyp");
     const type = await loadType(db, typeId);
-    const ev = eventsData.planUpdate(rows[0], type, req.body, { blocked: await planning.blockedFor(db, planId, type.id) });
-    await planning.assertArea(db, type, [ev.pro_id]);
-    await planning.assertAvailable(db, [ev]);
-    const before = type.id === rows[0].type_id ? planning.minutesOf(rows[0], type, "brutto") : 0;
-    await planning.assertCapacity(db, planId, type, planning.minutesOf(ev, type, "brutto") - before);
-    await planning.assertRules(db, planId, type, [ev], type.id === rows[0].type_id ? [rows[0]] : []);
-    await assertFree(db, planId, ev, eventId, "");
-    if (!rows[0].series_id) await planning.assertNotParallel(db, planId, type, [ev]);
-    const { rows: updated } = await db.query(
-      `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
-        WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
-      [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz, eventId]
-    );
-    // Serie: den Pro auf Wunsch auch für die folgenden bzw. alle anderen Termine übernehmen (Notiz bleibt je Termin)
-    const others = [];
-    const scope = req.body.serie;
-    if (rows[0].series_id && (scope === "folgende" || scope === "alle")) {
-      const { rows: siblings } = await db.query(
-        `SELECT ${EVENT_FIELDS} FROM events
-          WHERE plan_id = $1 AND series_id = $2 AND id <> $3 AND pro_id <> $4 AND series_index > $5
-          ORDER BY series_index FOR UPDATE`,
-        [planId, rows[0].series_id, eventId, ev.pro_id, scope === "folgende" ? rows[0].series_index : 0]
-      );
-      const moved = siblings.map((s) => ({ ...s, pro_id: ev.pro_id }));
-      await planning.assertAvailable(db, moved);
-      for (const s of moved) {
-        await assertFree(db, planId, s, s.id, `Termin ${s.series_index}: `);
-        const { rows: done } = await db.query(`UPDATE events SET pro_id = $1 WHERE id = $2 RETURNING ${EVENT_FIELDS}`, [s.pro_id, s.id]);
-        others.push(done[0]);
-      }
+    let plan;
+    try {
+      plan = await planning.planChange(db, planId, rows[0], type, req.body);
+    } catch (err) {
+      if (!dryRun || !(err instanceof eventsData.ValidationError)) throw err;
+      return res.json({ dry_run: true, termine: [], konflikte: [{ termin: null, text: err.message }], hinweise: [] });
     }
-    res.json({ event: updated[0], events: [updated[0], ...others] });
+    if (dryRun) {
+      return res.json({
+        dry_run: true,
+        termine: plan.changes.map(({ before: b, after: a }) => ({
+          id: b.id, termin: b.series_index, datum_vorher: b.date, datum: a.date, pro_vorher: b.pro_id, pro: a.pro_id,
+          zeit_vorher: [b.start_min, b.end_min], zeit: [a.start_min, a.end_min],
+        })),
+        konflikte: plan.konflikte,
+        hinweise: plan.hinweise,
+      });
+    }
+    if (plan.konflikte.length) {
+      const err = new eventsData.ValidationError(planning.conflictText(plan.konflikte));
+      err.status = 409;
+      throw err;
+    }
+    const updated = [];
+    for (const { after: a } of plan.changes) {
+      const { rows: done } = await db.query(
+        `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
+          WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
+        [a.type_id, a.pro_id, a.date, a.start_min, a.end_min, a.notiz, a.id]
+      );
+      updated.push(done[0]);
+    }
+    const main = updated.find((e) => e.id === eventId);
+    res.json({ event: main, events: [main, ...updated.filter((e) => e !== main)] });
   })
 );
 
