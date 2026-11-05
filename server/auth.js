@@ -86,7 +86,7 @@ async function destroySession(req, res) {
 async function loadSession(req, res, next) {
   req.session = null;
   // Datenpflege über die API (Header «X-Api-Token» = API_TOKEN): eigene Rolle «api»,
-  // darf Pros, Event-Typen, Events und den Verlauf bearbeiten, aber keine Benutzerkonten.
+  // darf Pros, Kurstypen, Kurse und den Verlauf bearbeiten, aber keine Benutzerkonten.
   if (tokenMatches(req.get("x-api-token"), process.env.API_TOKEN)) {
     req.session = { role: "api", name: "Claude (API)", username: "api" };
     return next();
@@ -124,7 +124,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Admins oder der API-Schlüssel – nur für Daten (Pros, Event-Typen, Events, Verlauf)
+// Admins oder der API-Schlüssel – nur für Daten (Pros, Kurstypen, Kurse, Verlauf)
 function requireDataAdmin(req, res, next) {
   if (!["admin", "api"].includes(req.session?.role)) return res.status(403).json({ error: "Keine Berechtigung." });
   next();

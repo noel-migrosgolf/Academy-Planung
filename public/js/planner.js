@@ -1,5 +1,5 @@
 // Einsatzkalender der Pros: Tag / Woche / Monat / Saison.
-// Zeigt die geplanten Events mit Brutto- bzw. Netto-Stunden.
+// Zeigt die geplanten Kurse mit Brutto- bzw. Netto-Stunden.
 (function () {
   const D = window.Dates;
   const { el } = D;
@@ -19,7 +19,7 @@
 
   let pros = [];
   let events = [];
-  let byDayPro = new Map(); // "YYYY-MM-DD|proId" → Events
+  let byDayPro = new Map(); // "YYYY-MM-DD|proId" → Kurse
   let state = { range: "week", date: D.mondayOfWeek(YEAR, 1), hidden: new Set(), mode: "brutto" };
   let refs = null;
 
@@ -59,7 +59,7 @@
     render();
   }
 
-  // --- Events & Summen ---
+  // --- Kurse & Summen ---
 
   function eventsOn(date, proId) {
     return byDayPro.get(`${D.isoKey(date)}|${proId}`) || [];
@@ -80,8 +80,8 @@
         minutes += sum(evs);
       }
     }
-    if (!count) return "Noch keine Events geplant";
-    return `${count} ${count === 1 ? "Event" : "Events"} · ${E.formatHM(minutes)} ${state.mode}`;
+    if (!count) return "Noch keine Kurse geplant";
+    return `${count} ${count === 1 ? "Kurs" : "Kurse"} · ${E.formatHM(minutes)} ${state.mode}`;
   }
 
   // Farbstufe 0–6 für Monats- und Saisonzellen
@@ -130,7 +130,7 @@
     return lines.join("\n");
   }
 
-  // Erste freie Stunde ab 09:00 für ein neues Event an diesem Tag
+  // Erste freie Stunde ab 09:00 für einen neuen Kurs an diesem Tag
   function suggestSlot(date, proId) {
     let start = 9 * 60;
     for (const ev of eventsOn(date, proId)) {
@@ -140,12 +140,12 @@
     return { start_min: start, end_min: start + 60 };
   }
 
-  // Rechtsklick auf eine freie Stelle: Event für diesen Pro und Tag erstellen
+  // Rechtsklick auf eine freie Stelle: Kurs für diesen Pro und Tag erstellen
   function createMenu(e, pro, date, slot, extra = []) {
     const prefill = { pro_id: pro.id, date: D.isoKey(date), ...slot };
     ContextMenu.open(e, [
       {
-        label: "Event erstellen",
+        label: "Kurs erstellen",
         hint: `${pro.name} · ${D.formatShort(date)} · ${E.clock(slot.start_min)}–${E.clock(slot.end_min)}`,
         action: () => E.openEvent(null, prefill),
       },
@@ -160,7 +160,7 @@
   const snap = (min) => Math.round(min / SNAP_MIN) * SNAP_MIN;
   const limit = (min) => Math.max(DAY_START * 60, Math.min(DAY_END * 60, min));
 
-  // Event-Block: Unterricht (netto) ab Beginn voll, Puffer am Ende schraffiert
+  // Kurs-Block: Unterricht (netto) ab Beginn voll, Puffer am Ende schraffiert
   function eventBlock(ev) {
     const t = E.typeOf(ev);
     const block = el("div", "ev");
@@ -186,7 +186,7 @@
     return block;
   }
 
-  // Aufziehen oder Klicken in einer Spalte erstellt ein neues Event
+  // Aufziehen oder Klicken in einer Spalte erstellt einen neuen Kurs
   function enableCreate(col, pro, date) {
     col.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
@@ -237,7 +237,7 @@
     const date = state.date;
     const list = visiblePros();
     const title = `${D.WEEKDAYS_LONG[D.weekday(date)]}, ${D.formatShort(date)}`;
-    const hd = cardHead(title, rangeSummary([date], list), "Aufziehen, Klick oder Rechtsklick = neues Event · voll = Unterricht (netto), schraffiert = Puffer am Ende");
+    const hd = cardHead(title, rangeSummary([date], list), "Aufziehen, Klick oder Rechtsklick = neuer Kurs · voll = Unterricht (netto), schraffiert = Puffer am Ende");
     const badge = holidayBadge(date);
     if (badge) hd.insertBefore(badge, hd.children[1]);
     card.appendChild(hd);
@@ -291,7 +291,7 @@
     const monday = D.startOfWeek(state.date);
     const days = Array.from({ length: 7 }, (_, i) => D.addDays(monday, i));
     const list = visiblePros();
-    card.appendChild(cardHead(`Alle Pros · KW ${D.isoWeek(monday)}`, rangeSummary(days, list), "Rechtsklick = Event erstellen, bearbeiten, löschen"));
+    card.appendChild(cardHead(`Alle Pros · KW ${D.isoWeek(monday)}`, rangeSummary(days, list), "Rechtsklick = Kurs erstellen, bearbeiten, löschen"));
 
     if (!list.length) return emptyHint(card);
 
@@ -397,7 +397,7 @@
           createMenu(e, pro, day, suggestSlot(day, pro.id), [
             ...(evs.length ? ["-"] : []),
             ...evs.map((ev) => ({
-              label: `Bearbeiten: ${E.clock(ev.start_min)} ${E.typeOf(ev)?.name || "Event"}`,
+              label: `Bearbeiten: ${E.clock(ev.start_min)} ${E.typeOf(ev)?.name || "Kurs"}`,
               action: () => E.openEvent(ev),
             })),
             "-",

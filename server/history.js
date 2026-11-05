@@ -1,7 +1,7 @@
-// Versionsverlauf der Zuweisungen, je Plan: Nach jeder erfolgreichen Änderung an den Events eines Plans
-// (welcher Pro wann welchen Kurs hat) wird der Stand aller Events dieses Plans als Version gespeichert.
+// Versionsverlauf der Zuweisungen, je Plan: Nach jeder erfolgreichen Änderung an den Kursen eines Plans
+// (welcher Pro wann welchen Kurs hat) wird der Stand aller Kurse dieses Plans als Version gespeichert.
 // Eine Version lässt sich wiederherstellen; das ist selbst wieder eine Version.
-// Pros, Event-Typen und Benutzerkonten sind bewusst ausgenommen (werden manuell gepflegt).
+// Pros, Kurstypen und Benutzerkonten sind bewusst ausgenommen (werden manuell gepflegt).
 
 const { pool } = require("./db");
 
@@ -19,7 +19,7 @@ async function migrate() {
     ALTER TABLE versions ADD COLUMN IF NOT EXISTS plan_id INTEGER REFERENCES plans(id) ON DELETE CASCADE;
     CREATE INDEX IF NOT EXISTS versions_plan_idx ON versions (plan_id, id DESC);
   `);
-  // Ältere Versionen enthielten auch Pros und Event-Typen; sie werden einmalig gelöscht.
+  // Ältere Versionen enthielten auch Pros und Kurstypen; sie werden einmalig gelöscht.
   await pool.query("DELETE FROM versions WHERE data ? 'pros'");
   // Versionen aus der Zeit vor den Plänen gehören zum ältesten Plan (Hauptplan).
   await pool.query("UPDATE versions SET plan_id = (SELECT min(id) FROM plans) WHERE plan_id IS NULL");
@@ -54,7 +54,7 @@ async function latestId(planId, db = pool) {
   return rows[0].id;
 }
 
-// Entsprechen die aktuellen Events des Plans genau dem Stand dieser Version?
+// Entsprechen die aktuellen Kurse des Plans genau dem Stand dieser Version?
 async function matchesCurrent(planId, versionId) {
   const current = await snapshot(pool, planId);
   const { rows } = await pool.query(
@@ -73,8 +73,8 @@ async function list(planId) {
   return rows;
 }
 
-// Setzt die Events des Plans auf den Stand der Version zurück. Pros und Event-Typen bleiben unverändert;
-// Events, deren Pro oder Typ es nicht mehr gibt, werden ausgelassen.
+// Setzt die Kurse des Plans auf den Stand der Version zurück. Pros und Kurstypen bleiben unverändert;
+// Kurse, deren Pro oder Typ es nicht mehr gibt, werden ausgelassen.
 async function restore(planId, versionId, actor) {
   const db = await pool.connect();
   try {
@@ -93,11 +93,11 @@ async function restore(planId, versionId, actor) {
       .map((e) => ({ ...e, plan_id: planId, created_by: userIds.has(e.created_by) ? e.created_by : null }));
     const skipped = data.events.length - events.length;
 
-    // Die IDs stammen alle aus der Event-Sequenz, die Sequenz muss daher nicht angepasst werden.
+    // Die IDs stammen alle aus der Kurs-Sequenz, die Sequenz muss daher nicht angepasst werden.
     await db.query("DELETE FROM events WHERE plan_id = $1", [planId]);
     await db.query("INSERT INTO events SELECT * FROM jsonb_populate_recordset(NULL::events, $1)", [JSON.stringify(events)]);
     const when = new Date(rows[0].created_at).toLocaleString("de-CH", { timeZone: "Europe/Zurich" });
-    const note = skipped ? `, ${skipped} Events ausgelassen (Pro oder Typ gelöscht)` : "";
+    const note = skipped ? `, ${skipped} Kurse ausgelassen (Pro oder Typ gelöscht)` : "";
     const newId = await record(planId, actor, `Version #${versionId} wiederhergestellt (Stand ${when}${note})`, db);
     await db.query("COMMIT");
     return newId;

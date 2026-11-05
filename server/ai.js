@@ -66,11 +66,12 @@ Die Planung betrifft immer das Jahr 2027: Datumsangaben ohne Jahr meinen 2027, u
 
 Daten
 - Pros haben Sollstunden pro Jahr. Auslastung = geplante Brutto-Stunden / Sollstunden.
-- Event-Typen: Brutto zählt gegen die Sollstunden, Netto ist Unterrichtszeit, der Puffer liegt am Ende. Ein Typ kann eine feste Zeit und einen festen Wochentag für den ersten Termin vorgeben. Serien-Typen legen mehrere Termine an (Abstände in Tagen ab dem ersten Termin); bei Serien sind pro Termin nur Pro und Notiz änderbar. Gib bei Serien mit «pros» pro Termin einen eigenen Pro an.
-- Ein Pro kann keine zwei überschneidenden Events haben.
-- Event-Typen können einen einplanbaren Zeitraum und ein Maximum an Sollstunden (brutto, über alle Pros zusammen) haben; daten_lesen zeigt beides.
+- Kurstypen: Brutto zählt gegen die Sollstunden, Netto ist Unterrichtszeit, der Puffer liegt am Ende. Ein Typ kann eine feste Zeit und einen festen Wochentag für den ersten Termin vorgeben. Serien-Typen legen mehrere Termine an (Abstände in Tagen ab dem ersten Termin); bei Serien sind pro Termin nur Pro und Notiz änderbar. Gib bei Serien mit «pros» pro Termin einen eigenen Pro an.
+- Ein Pro kann keine zwei überschneidenden Kurse haben.
+- Kurstypen können «nicht parallel zu» anderen Kurstypen sein (daten_lesen, letzte Spalte): dann dürfen sich deren Termine im Plan zeitlich nicht überschneiden, auch nicht bei verschiedenen Pros. Das Tool lehnt solche Termine ab; auslasten hält es ein.
+- Kurstypen können einen einplanbaren Zeitraum und ein Maximum an Sollstunden (brutto, über alle Pros zusammen) haben; daten_lesen zeigt beides.
 - Regeln (Reiter «Regeln») legen fest, wie viele Sollstunden eines Kurses in einem Zeitraum stattfinden müssen (mindestens, genau, mehr als, höchstens), welcher Anteil der Sollstunden von Kursen an bestimmten Wochentagen liegen muss und welche Kurse nicht in den Schulferien (Kanton Zug) stattfinden (Serien überspringen dann Ferienwochen automatisch). daten_lesen zeigt sie mit ID (R1, R2 …) und Stand; regel_pruefen erklärt, warum eine Regel nicht erfüllt ist. Obergrenzen sperrt das Tool, Untergrenzen erfüllt auslasten mit regeln_erfuellen, Wochentag-Anteile hält auslasten ein; beim Planen von Hand achtest du selbst darauf.
-- Jeder Event-Typ hat einen Einsatzbereich (Kurse, Bambini, GCE oder alle); nur Pros mit diesem Bereich dürfen ihn übernehmen. Die Bereiche der Pros stehen bei daten_lesen unter «Einsatz».
+- Jeder Kurstyp hat einen Einsatzbereich (Kurse, Bambini, GCE oder alle); nur Pros mit diesem Bereich dürfen ihn übernehmen. Die Bereiche der Pros stehen bei daten_lesen unter «Einsatz».
 
 Arbeitsweise
 - Lies nur, was du brauchst: daten_lesen mit Zeitraum, Pro und Teil eingrenzen.
@@ -103,7 +104,7 @@ const CHECK = { type: "boolean", description: "true = nur prüfen, nichts speich
 const LEGACY_TOOLS = [
   {
     name: "daten_lesen",
-    description: "Liest Pros (Soll, geplante Stunden, Auslastung), Event-Typen und Events als kompakte Textzeilen. Mit Zeitraum und Pro eingrenzen.",
+    description: "Liest Pros (Soll, geplante Stunden, Auslastung), Kurstypen und Kurse als kompakte Textzeilen. Mit Zeitraum und Pro eingrenzen.",
     input_schema: {
       type: "object",
       properties: {
@@ -117,7 +118,7 @@ const LEGACY_TOOLS = [
   },
   {
     name: "events_anlegen",
-    description: "Legt Events an (Serien-Typen: ein Eintrag = ganze Serie ab datum). Ganz oder gar nicht.",
+    description: "Legt Kurse an (Serien-Typen: ein Eintrag = ganze Serie ab datum). Ganz oder gar nicht.",
     input_schema: {
       type: "object",
       properties: {
@@ -146,7 +147,7 @@ const LEGACY_TOOLS = [
   },
   {
     name: "events_aendern",
-    description: "Ändert Events per id; nicht angegebene Felder bleiben. Ganz oder gar nicht.",
+    description: "Ändert Kurse per id; nicht angegebene Felder bleiben. Ganz oder gar nicht.",
     input_schema: {
       type: "object",
       properties: {
@@ -175,7 +176,7 @@ const LEGACY_TOOLS = [
   },
   {
     name: "events_loeschen",
-    description: "Löscht Events per id. ganze_serie = alle Termine der Serie mitlöschen.",
+    description: "Löscht Kurse per id. ganze_serie = alle Termine der Serie mitlöschen.",
     input_schema: {
       type: "object",
       properties: {
@@ -198,7 +199,7 @@ const LEGACY_TOOLS = [
   },
   {
     name: "version_wiederherstellen",
-    description: "Setzt alle Pros, Typen und Events auf den Stand einer Version zurück (nur Admins).",
+    description: "Setzt alle Pros, Typen und Kurse auf den Stand einer Version zurück (nur Admins).",
     input_schema: {
       type: "object",
       properties: { version_id: { type: "integer" } },
@@ -210,7 +211,7 @@ const LEGACY_TOOLS = [
 
 const AUTOFILL_TOOL = {
   name: "auslasten",
-  description: "Plant automatisch Serien der gewählten Typen, gleichmässig über den Zeitraum verteilt, bis die Pros die Ziel-Auslastung erreichen (Brutto in % der Sollstunden, bestehende Events zählen mit). Ohne Überschneidungen. Für grosse Mengen statt events_anlegen.",
+  description: "Plant automatisch Serien der gewählten Typen, gleichmässig über den Zeitraum verteilt, bis die Pros die Ziel-Auslastung erreichen (Brutto in % der Sollstunden, bestehende Kurse zählen mit). Ohne Überschneidungen. Für grosse Mengen statt events_anlegen.",
   input_schema: {
     type: "object",
     properties: {
@@ -244,7 +245,7 @@ const TOOLS = [
   AUTOFILL_TOOL,
   RULE_CHECK_TOOL,
   LEGACY_TOOLS[4],
-  { ...LEGACY_TOOLS[5], description: "Setzt die Events (Zuweisungen) des Plans auf den Stand einer Version zurück; Pros und Typen bleiben." },
+  { ...LEGACY_TOOLS[5], description: "Setzt die Kurse (Zuweisungen) des Plans auf den Stand einer Version zurück; Pros und Typen bleiben." },
 ];
 
 const actor = (session) => `${session.name} (KI)`;
@@ -357,9 +358,9 @@ async function executeTool(ctx, block) {
 
 const TOOL_LABELS = {
   daten_lesen: "liest Daten",
-  events_anlegen: "plant Events",
-  events_aendern: "ändert Events",
-  events_loeschen: "löscht Events",
+  events_anlegen: "plant Kurse",
+  events_aendern: "ändert Kurse",
+  events_loeschen: "löscht Kurse",
   auslasten: "verteilt Kurse",
   regel_pruefen: "prüft Regel",
   verlauf: "liest Verlauf",
@@ -623,7 +624,7 @@ async function runChat(chat, session, text, base, canEdit) {
   }
 }
 
-// Macht eine Änderung aus dem Chat rückgängig. Event-Änderungen werden gezielt zurückgenommen
+// Macht eine Änderung aus dem Chat rückgängig. Kurs-Änderungen werden gezielt zurückgenommen
 // (andere Daten bleiben unberührt). Eine von der KI wiederhergestellte Version setzt dagegen den ganzen
 // Stand des Plans zurück; wurde seither weiter geplant, ist dafür «force» nötig.
 router.post("/chats/:id/undo", plans.requireEdit, async (req, res) => {

@@ -1,4 +1,4 @@
-// Events: Brutto/Netto-Berechnung, Event-Dialog (einzeln oder Serie) und Events-Seite.
+// Kurse: Brutto/Netto-Berechnung, Kurs-Dialog (einzeln oder Serie) und Kurse-Seite.
 (function () {
   const D = window.Dates;
   const { el } = D;
@@ -40,7 +40,7 @@
   }
 
   // Ende des Unterrichts: Der Unterricht beginnt pünktlich, der ganze Puffer
-  // liegt am Ende des Events.
+  // liegt am Ende des Kurses.
   function lessonEnd(ev) {
     return Math.min(ev.end_min, Math.round(ev.start_min + minutesOf(ev, "netto")));
   }
@@ -75,12 +75,12 @@
 
   // "Platzreife Teil 1 A · 2/4"
   function eventName(ev) {
-    const name = typeOf(ev)?.name || "Event";
+    const name = typeOf(ev)?.name || "Kurs";
     const t = typeOf(ev);
     return ev.series_id && t ? `${name} · ${ev.series_index}/${t.series_offsets.length}` : name;
   }
 
-  // Geplante Stunden je Pro (Minuten brutto/netto) aus allen geladenen Events
+  // Geplante Stunden je Pro (Minuten brutto/netto) aus allen geladenen Kursen
   function plannedByPro() {
     const result = new Map();
     for (const ev of data.events) {
@@ -158,7 +158,7 @@
     return t.series_offsets.map((o) => D.WEEKDAYS[(t.first_weekday + o) % 7]).join(", ");
   }
 
-  // --- Event-Dialog ---
+  // --- Kurs-Dialog ---
 
   function fillSelect(select, items, label) {
     select.replaceChildren(...items.map((i) => new Option(label(i), String(i.id))));
@@ -268,7 +268,7 @@
     $("#event-fixed-hint").hidden = !fixed || !!editingEvent?.series_id;
     $("#event-fixed-hint").textContent = t.series_times
       ? `Die Zeiten sind je Termin fest vorgegeben: ${timesText(t)} (inkl. Puffer am Ende).`
-      : "Die Zeit ist durch den Event-Typ fest vorgegeben (inkl. Puffer am Ende).";
+      : "Die Zeit ist durch den Kurstyp fest vorgegeben (inkl. Puffer am Ende).";
 
     // Beim Wechsel auf einen Typ mit festem Wochentag zum nächsten passenden Tag springen
     if (adjustDate && t.first_weekday !== null && f.date.value) {
@@ -281,14 +281,14 @@
     updatePreview();
   }
 
-  // event: bestehendes Event bearbeiten; prefill: { pro_id, date, start_min, end_min } für ein neues
+  // event: bestehender Kurs bearbeiten; prefill: { pro_id, date, start_min, end_min } für ein neues
   function openEvent(event, prefill = {}) {
     if (!event && !ctx.canEdit()) {
       ctx.toast("Dieser Plan ist für dich nur zum Ansehen freigegeben.");
       return;
     }
     if (!data.types.length) {
-      ctx.toast("Es gibt noch keinen Event-Typ. Ein Admin muss zuerst einen anlegen.");
+      ctx.toast("Es gibt noch keinen Kurstyp. Ein Admin muss zuerst einen anlegen.");
       return;
     }
     if (!data.pros.length) {
@@ -306,7 +306,7 @@
     const t = event ? typeOf(event) : null;
     $("#event-title").textContent = series
       ? `${t?.name || "Serie"} · Termin ${event.series_index} von ${t?.series_offsets.length ?? "?"}`
-      : event ? "Event bearbeiten" : "Neues Event";
+      : event ? "Kurs bearbeiten" : "Neuer Kurs";
     $("#event-delete").hidden = !event;
     $("#event-delete").textContent = series ? "Serie löschen" : "Löschen";
     $("#event-series-note").hidden = !series;
@@ -322,12 +322,12 @@
     }
 
     const f = form.elements;
-    // Serien-Typen lassen sich nur neu anlegen, nicht aus einem einzelnen Event
+    // Serien-Typen lassen sich nur neu anlegen, nicht aus einem einzelnen Kurs
     const types = event && !series ? data.types.filter((x) => !isSeriesType(x)) : data.types;
     fillSelect(f.type_id, types, (x) => (isSeriesType(x) ? `${x.name} (${x.series_offsets.length} Termine)` : x.name));
     fillSelect(f.pro_id, data.pros, (p) => p.name);
     const v = event || prefill;
-    // Neues Event für einen bestimmten Pro: ersten Typ wählen, den dieser Pro übernehmen darf
+    // Neuer Kurs für einen bestimmten Pro: ersten Typ wählen, den dieser Pro übernehmen darf
     const proPrefill = data.pros.find((p) => p.id === v.pro_id);
     const fitting = proPrefill && types.find((x) => allowedPros(x).includes(proPrefill));
     f.type_id.value = String(v.type_id || (fitting || types[0]).id);
@@ -351,14 +351,14 @@
     const t = typeOf(ev);
     const label = ev.series_id
       ? `${t?.name || "Serie"} (${series.length} Termine) gelöscht`
-      : `${t?.name || "Event"} ${clock(ev.start_min)}–${clock(ev.end_min)} gelöscht`;
+      : `${t?.name || "Kurs"} ${clock(ev.start_min)}–${clock(ev.end_min)} gelöscht`;
     // Rückgängig stellt die gelöschten Termine unverändert wieder her (inkl. Notiz je Termin)
     ctx.toast(label, token && {
       label: "Rückgängig",
       run: async () => {
         try {
           await ctx.api(`/undo/${token}`, { method: "POST" });
-          ctx.toast(ev.series_id ? "Serie wiederhergestellt" : "Event wiederhergestellt");
+          ctx.toast(ev.series_id ? "Serie wiederhergestellt" : "Kurs wiederhergestellt");
           ctx.reload();
         } catch (err) {
           ctx.toast(err.message);
@@ -368,7 +368,7 @@
     ctx.reload();
   }
 
-  // Rechtsklick-Menü für ein bestehendes Event
+  // Rechtsklick-Menü für einen bestehenden Kurs
   function eventMenu(e, ev) {
     const series = ev.series_id ? seriesOf(ev) : null;
     ContextMenu.open(e, [
@@ -385,7 +385,7 @@
     ]);
   }
 
-  // --- Event-Typ-Dialog (Admin) ---
+  // --- Kurstyp-Dialog (Admin) ---
 
   function updateTypeForm() {
     const f = $("#type-form").elements;
@@ -416,7 +416,7 @@
     const form = $("#type-form");
     form.reset();
     form.querySelector(".form-error").textContent = "";
-    $("#type-title").textContent = type ? `${type.name} bearbeiten` : "Neuer Event-Typ";
+    $("#type-title").textContent = type ? `${type.name} bearbeiten` : "Neuer Kurstyp";
     $("#type-delete").hidden = !type;
     const f = form.elements;
     f.name.value = type?.name || "";
@@ -436,8 +436,37 @@
     f.first_weekday.value = type?.first_weekday != null ? String(type.first_weekday) : "";
     f.series_offsets.value = (type?.series_offsets || [0]).join(", ");
     f.series_times.value = type?.series_times ? type.series_times.map(([a, b]) => `${clock(a)}-${clock(b)}`).join(", ") : "";
+    renderParallel(type);
     updateTypeForm();
     $("#dlg-type").showModal();
+  }
+
+  // «Darf nicht parallel stattfinden zu»: Häkchen-Liste aller anderen Kurstypen
+  function renderParallel(type) {
+    const chosen = new Set(type?.nicht_parallel || []);
+    const list = $("#type-parallel-list");
+    list.replaceChildren();
+    for (const t of sortedTypes().filter((x) => x.id !== type?.id)) {
+      const row = el("label");
+      const box = el("input");
+      Object.assign(box, { type: "checkbox", value: String(t.id), checked: chosen.has(t.id) });
+      box.addEventListener("change", updateParallelSummary);
+      const dot = el("span", "gdot");
+      dot.style.background = t.color;
+      row.append(box, dot, document.createTextNode(t.code ? `${t.code} · ${t.name}` : t.name));
+      list.append(row);
+    }
+    $("#type-parallel").open = false;
+    updateParallelSummary();
+  }
+
+  function parallelIds() {
+    return [...document.querySelectorAll("#type-parallel-list input:checked")].map((b) => Number(b.value));
+  }
+
+  function updateParallelSummary() {
+    const names = parallelIds().map((id) => data.types.find((t) => t.id === id)).map((t) => t.code || t.name);
+    $("#type-parallel-sum").textContent = names.length ? names.join(", ") : "keinem anderen Kurstyp";
   }
 
   function readTypeForm() {
@@ -463,10 +492,11 @@
       first_weekday: f.first_weekday.value === "" ? null : Number(f.first_weekday.value),
       series_offsets: offsets,
       series_times: f.series_times.value.trim() ? f.series_times.value.split(/\s*[,;]\s*/).filter(Boolean) : null,
+      nicht_parallel: parallelIds(),
     };
   }
 
-  // --- Events-Seite ---
+  // --- Kurse-Seite ---
 
   function hoursText(t) {
     if (t.calc === "pauschal") {
@@ -527,6 +557,8 @@
       const dot = el("span", "gdot");
       dot.style.background = t.color;
       name.append(dot, document.createTextNode(t.name));
+      const avoid = (t.nicht_parallel || []).map((id) => data.types.find((x) => x.id === id)).filter(Boolean);
+      if (avoid.length) name.append(el("span", "type-sub", `nicht parallel zu ${avoid.map((x) => x.code || x.name).join(", ")}`));
       const booked = t.fixed_start_min !== null ? bookedEnd(t, t.fixed_start_min, t.fixed_end_min) : null;
       const time = t.series_times
         ? `je Termin ${timesText(t)}`
@@ -581,7 +613,7 @@
     $("#event-empty").hidden = sorted.length > 0;
     $("#event-table").hidden = sorted.length === 0;
     $("#event-sum").textContent = sorted.length
-      ? `${sorted.length} ${sorted.length === 1 ? "Event" : "Events"} · ${formatHM(brutto)} brutto · ${formatHM(netto)} netto`
+      ? `${sorted.length} ${sorted.length === 1 ? "Kurs" : "Kurse"} · ${formatHM(brutto)} brutto · ${formatHM(netto)} netto`
       : "";
   }
 
@@ -646,8 +678,8 @@
         $("#dlg-event").close();
         const count = result.events?.length || 1;
         ctx.toast(editingEvent
-          ? count > 1 ? `Pro für ${count} Termine der Serie übernommen` : "Event gespeichert"
-          : count > 1 ? `Serie mit ${count} Terminen erstellt` : "Event erstellt");
+          ? count > 1 ? `Pro für ${count} Termine der Serie übernommen` : "Kurs gespeichert"
+          : count > 1 ? `Serie mit ${count} Terminen erstellt` : "Kurs erstellt");
         ctx.reload();
       } catch (err) {
         ef.querySelector(".form-error").textContent = err.message;
@@ -668,12 +700,13 @@
     tf.addEventListener("submit", async (e) => {
       e.preventDefault();
       try {
-        const { type } = await ctx.api(editingType ? `/event-types/${editingType.id}` : "/event-types", {
+        const saved = await ctx.api(editingType ? `/event-types/${editingType.id}` : "/event-types", {
           method: editingType ? "PUT" : "POST",
           body: readTypeForm(),
         });
         $("#dlg-type").close();
-        ctx.toast(editingType ? `«${type.name}» gespeichert` : `Event-Typ «${type.name}» angelegt`);
+        const { type, warnung } = saved;
+        ctx.toast(warnung || (editingType ? `«${type.name}» gespeichert` : `Kurstyp «${type.name}» angelegt`));
         ctx.reload();
       } catch (err) {
         tf.querySelector(".form-error").textContent = err.message;
@@ -684,7 +717,7 @@
       try {
         await ctx.api(`/event-types/${editingType.id}`, { method: "DELETE" });
         $("#dlg-type").close();
-        ctx.toast(`Event-Typ «${editingType.name}» gelöscht`);
+        ctx.toast(`Kurstyp «${editingType.name}» gelöscht`);
         ctx.reload();
       } catch (err) {
         tf.querySelector(".form-error").textContent = err.message;

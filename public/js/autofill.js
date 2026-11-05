@@ -23,7 +23,7 @@
     const box = $("#af-types");
     box.replaceChildren();
     const types = fixedTypes();
-    if (!types.length) box.append(el("span", "note", "Es gibt noch keine Event-Typen mit fester Zeit."));
+    if (!types.length) box.append(el("span", "note", "Es gibt noch keine Kurstypen mit fester Zeit."));
     for (const t of types) {
       const chip = el("button", `chip${excluded.has(t.id) ? " off" : ""}`);
       chip.type = "button";

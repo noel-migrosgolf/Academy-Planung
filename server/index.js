@@ -139,7 +139,7 @@ async function savePro(res, run) {
   }
 }
 
-// Pros und Event-Typen werden manuell gepflegt und nicht im Verlauf gespeichert (nur die Events).
+// Pros und Kurstypen werden manuell gepflegt und nicht im Verlauf gespeichert (nur die Kurse).
 api.post("/pros", auth.requireDataAdmin, (req, res) =>
   savePro(res, () => {
     const pro = prosData.normalize(req.body);
@@ -164,7 +164,7 @@ api.put("/pros/:id", auth.requireDataAdmin, (req, res) =>
   })
 );
 
-// Mit dem Pro werden auch seine Events gelöscht (in allen Plänen); betroffene Pläne erhalten eine Version.
+// Mit dem Pro werden auch seine Kurse gelöscht (in allen Plänen); betroffene Pläne erhalten eine Version.
 api.delete("/pros/:id", auth.requireDataAdmin, async (req, res) => {
   const proId = Number.parseInt(req.params.id, 10) || 0;
   const { rows: affected } = await pool.query(
@@ -174,12 +174,12 @@ api.delete("/pros/:id", auth.requireDataAdmin, async (req, res) => {
   const { rows } = await pool.query("DELETE FROM pros WHERE id = $1 RETURNING id, name", [proId]);
   if (!rows[0]) return res.status(404).json({ error: "Pro nicht gefunden." });
   for (const a of affected) {
-    await history.record(a.plan_id, req.session.name, `Pro «${rows[0].name}» gelöscht, ${a.n} Events entfernt`);
+    await history.record(a.plan_id, req.session.name, `Pro «${rows[0].name}» gelöscht, ${a.n} Kurse entfernt`);
   }
   res.json({ ok: true, pro: rows[0], events: affected.reduce((sum, a) => sum + a.n, 0) });
 });
 
-// --- Event-Typen (Vorlagen, nur Admins bearbeiten) ---
+// --- Kurstypen (Vorlagen, nur Admins bearbeiten) ---
 
 api.get("/event-types", auth.requireLogin, async (req, res) => {
   const { rows } = await pool.query(`SELECT ${TYPE_FIELDS} FROM event_types ORDER BY sort_order, id`);
@@ -188,9 +188,9 @@ api.get("/event-types", auth.requireLogin, async (req, res) => {
 
 async function saveType(res, run) {
   try {
-    const { rows } = await run();
-    if (!rows[0]) return res.status(404).json({ error: "Event-Typ nicht gefunden." });
-    res.json({ type: rows[0] });
+    const { rows, warnung } = await run();
+    if (!rows[0]) return res.status(404).json({ error: "Kurstyp nicht gefunden." });
+    res.json({ type: rows[0], warnung: warnung || undefined });
   } catch (err) {
     if (err instanceof eventsData.ValidationError) return res.status(400).json({ error: err.message });
     if (err.code === "23505") return res.status(409).json({ error: "Diese ID ist bereits vergeben." });
@@ -199,15 +199,28 @@ async function saveType(res, run) {
 }
 
 api.post("/event-types", auth.requireDataAdmin, (req, res) =>
-  saveType(res, () => {
+  saveType(res, async () => {
     const t = eventsData.normalizeType(req.body);
     const cols = eventsData.TYPE_COLUMNS;
-    return pool.query(
-      `INSERT INTO event_types (${cols.join(", ")}, sort_order)
-       VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")}, (SELECT coalesce(max(sort_order), 0) + 1 FROM event_types))
-       RETURNING ${TYPE_FIELDS}`,
-      eventsData.typeValues(t)
-    );
+    const db = await pool.connect();
+    try {
+      await db.query("BEGIN");
+      const { rows } = await db.query(
+        `INSERT INTO event_types (${cols.join(", ")}, sort_order)
+         VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")}, (SELECT coalesce(max(sort_order), 0) + 1 FROM event_types))
+         RETURNING id`,
+        eventsData.typeValues(t)
+      );
+      await planning.syncNotParallel(db, rows[0].id, t.nicht_parallel);
+      const result = await db.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [rows[0].id]);
+      await db.query("COMMIT");
+      return result;
+    } catch (err) {
+      await db.query("ROLLBACK");
+      throw err;
+    } finally {
+      db.release();
+    }
   })
 );
 
@@ -217,7 +230,7 @@ api.put("/event-types/:id", auth.requireDataAdmin, (req, res) =>
     // Fehlen neuere Felder in der Anfrage (z. B. ältere Seite im Browser-Cache), bleiben sie unverändert.
     const body = { ...req.body };
     const { rows: old } = await pool.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [typeId]);
-    for (const key of ["einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_stunden"]) {
+    for (const key of ["einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_stunden", "nicht_parallel"]) {
       if (!(key in body)) body[key] = old[0]?.[key] ?? null;
     }
     const t = eventsData.normalizeType(body);
@@ -230,7 +243,7 @@ api.put("/event-types/:id", auth.requireDataAdmin, (req, res) =>
           WHERE id = $${cols.length + 1} RETURNING ${TYPE_FIELDS}`,
         [...eventsData.typeValues(t), typeId]
       );
-      // Bereits geplante Events übernehmen eine geänderte feste Zeit bzw. Brutto-Dauer –
+      // Bereits geplante Kurse übernehmen eine geänderte feste Zeit bzw. Brutto-Dauer –
       // aber nur, wenn dadurch kein Pro doppelt gebucht wird (in keinem Plan).
       if (result.rows[0]) {
         await db.query(eventsData.SYNC_FIXED_EVENTS_SQL, [typeId]);
@@ -251,6 +264,8 @@ api.put("/event-types/:id", auth.requireDataAdmin, (req, res) =>
             `Die neue Zeit würde bestehende Termine überschneiden: ${list}${clashes.length === 4 ? " …" : ""}. Bitte zuerst diese Termine verschieben.`
           );
         }
+        result.warnung = await planning.syncNotParallel(db, typeId, t.nicht_parallel);
+        result.rows = (await db.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [typeId])).rows;
       }
       await db.query("COMMIT");
       return result;
@@ -266,17 +281,18 @@ api.put("/event-types/:id", auth.requireDataAdmin, (req, res) =>
 api.delete("/event-types/:id", auth.requireDataAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query("DELETE FROM event_types WHERE id = $1 RETURNING id, name", [Number.parseInt(req.params.id, 10) || 0]);
-    if (!rows[0]) return res.status(404).json({ error: "Event-Typ nicht gefunden." });
+    if (!rows[0]) return res.status(404).json({ error: "Kurstyp nicht gefunden." });
+    await pool.query("UPDATE event_types SET nicht_parallel = array_remove(nicht_parallel, $1::int) WHERE $1::int = ANY(nicht_parallel)", [rows[0].id]);
     res.json({ ok: true, type: rows[0] });
   } catch (err) {
     if (err.code === "23503") {
-      return res.status(409).json({ error: "Dieser Typ wird noch von geplanten Events verwendet und kann nicht gelöscht werden." });
+      return res.status(409).json({ error: "Dieser Typ wird noch von geplanten Kursen verwendet und kann nicht gelöscht werden." });
     }
     throw err;
   }
 });
 
-// --- Events (geplante Einsätze, einzeln oder als Serie) ---
+// --- Kurse (geplante Einsätze, einzeln oder als Serie) ---
 
 api.get("/events", ...view, async (req, res) => {
   const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || "") ? req.query.from : "0001-01-01";
@@ -299,7 +315,7 @@ async function inTransaction(res, fn) {
   } catch (err) {
     await db.query("ROLLBACK");
     if (err instanceof eventsData.ValidationError) return res.status(err.status || 400).json({ error: err.message });
-    if (err.code === "23503") return res.status(400).json({ error: "Pro oder Event-Typ existiert nicht." });
+    if (err.code === "23503") return res.status(400).json({ error: "Pro oder Kurstyp existiert nicht." });
     throw err;
   } finally {
     db.release();
@@ -309,7 +325,7 @@ async function inTransaction(res, fn) {
 api.post("/events", ...edit, versioned(async (req, b) => `Geplant: ${await describeEvents(b.events)}`), (req, res) =>
   inTransaction(res, async (db) => {
     const planId = req.plan.id;
-    const type = await loadType(db, eventsData.id(req.body.type_id, "Event-Typ"));
+    const type = await loadType(db, eventsData.id(req.body.type_id, "Kurstyp"));
     const planned = eventsData.planNew(type, req.body, { blocked: await planning.blockedFor(db, planId, type.id) });
     await planning.assertArea(db, type, planned.map((ev) => ev.pro_id));
     await planning.assertAvailable(db, planned);
@@ -318,6 +334,7 @@ api.post("/events", ...edit, versioned(async (req, b) => `Geplant: ${await descr
     const created = [];
     for (const ev of planned) {
       await assertFree(db, planId, ev, 0, planned.length > 1 ? `Termin ${ev.series_index}: ` : "");
+      await planning.assertNotParallel(db, planId, type, [ev], planned.length > 1 ? `Termin ${ev.series_index}: ` : "");
       const { rows } = await db.query(
         `INSERT INTO events (plan_id, type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by)
          VALUES ($10, $1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${EVENT_FIELDS}`,
@@ -334,8 +351,8 @@ api.put("/events/:id", ...edit, versioned(async (req, b) => `Geändert: ${await 
     const eventId = Number.parseInt(req.params.id, 10) || 0;
     const planId = req.plan.id;
     const { rows } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE id = $1 AND plan_id = $2 FOR UPDATE`, [eventId, planId]);
-    if (!rows[0]) return res.status(404).json({ error: "Event nicht gefunden." });
-    const typeId = rows[0].series_id ? rows[0].type_id : eventsData.id(req.body.type_id, "Event-Typ");
+    if (!rows[0]) return res.status(404).json({ error: "Kurs nicht gefunden." });
+    const typeId = rows[0].series_id ? rows[0].type_id : eventsData.id(req.body.type_id, "Kurstyp");
     const type = await loadType(db, typeId);
     const ev = eventsData.planUpdate(rows[0], type, req.body, { blocked: await planning.blockedFor(db, planId, type.id) });
     await planning.assertArea(db, type, [ev.pro_id]);
@@ -344,6 +361,7 @@ api.put("/events/:id", ...edit, versioned(async (req, b) => `Geändert: ${await 
     await planning.assertCapacity(db, planId, type, planning.minutesOf(ev, type, "brutto") - before);
     await planning.assertRules(db, planId, type, [ev], type.id === rows[0].type_id ? [rows[0]] : []);
     await assertFree(db, planId, ev, eventId, "");
+    if (!rows[0].series_id) await planning.assertNotParallel(db, planId, type, [ev]);
     const { rows: updated } = await db.query(
       `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
         WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
@@ -595,7 +613,7 @@ api.get("/export", limitExport, auth.requireAdminOrExportToken, async (req, res)
   });
 });
 
-// --- Versionsverlauf (nur Events, je Plan) ---
+// --- Versionsverlauf (nur Kurse, je Plan) ---
 
 api.get("/versions", ...view, async (req, res) => {
   res.json({ versions: await history.list(req.plan.id) });

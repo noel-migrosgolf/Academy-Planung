@@ -99,7 +99,7 @@ async function migrate() {
     `SELECT 1 FROM information_schema.columns
       WHERE table_schema = current_schema() AND table_name = 'event_types' AND column_name = 'series_offsets'`
   );
-  // Einsatzbereich je Event-Typ; beim Einführen gehören alle bestehenden Typen zu «Kurse».
+  // Einsatzbereich je Kurstyp; beim Einführen gehören alle bestehenden Typen zu «Kurse».
   const { rows: areaCol } = await pool.query(
     `SELECT 1 FROM information_schema.columns
       WHERE table_schema = current_schema() AND table_name = 'event_types' AND column_name = 'einsatzbereich'`
@@ -119,7 +119,8 @@ async function migrate() {
       ADD COLUMN IF NOT EXISTS first_weekday   INTEGER,
       ADD COLUMN IF NOT EXISTS series_offsets  INTEGER[] NOT NULL DEFAULT '{0}',
       ADD COLUMN IF NOT EXISTS series_times    JSONB,
-      ADD COLUMN IF NOT EXISTS code            TEXT;
+      ADD COLUMN IF NOT EXISTS code            TEXT,
+      ADD COLUMN IF NOT EXISTS nicht_parallel  INTEGER[] NOT NULL DEFAULT '{}';
     CREATE UNIQUE INDEX IF NOT EXISTS event_types_code_idx ON event_types (lower(code)) WHERE code IS NOT NULL;
     ALTER TABLE events
       ADD COLUMN IF NOT EXISTS series_id    TEXT,
@@ -138,7 +139,7 @@ async function migrate() {
     );
   }
 
-  // Start-Event-Typen nur beim erstmaligen Anlegen der Tabelle einfügen.
+  // Start-Kurstypen nur beim erstmaligen Anlegen der Tabelle einfügen.
   if (!existing[0].has_event_types) {
     for (const seed of events.SEED_TYPES) await insertType(seed);
   }
@@ -174,7 +175,7 @@ async function migrate() {
   `);
 
   // Pläne: jeder Benutzer kann mehrere Pläne haben und sie teilen (ansehen oder bearbeiten).
-  // Termine und Regeln gehören zu einem Plan; Pros und Event-Typen sind gemeinsam.
+  // Termine und Regeln gehören zu einem Plan; Pros und Kurstypen sind gemeinsam.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS plans (
       id         SERIAL PRIMARY KEY,
@@ -206,7 +207,7 @@ async function migrate() {
   }
   await pool.query("ALTER TABLE events ALTER COLUMN plan_id SET NOT NULL; ALTER TABLE rules ALTER COLUMN plan_id SET NOT NULL;");
 
-  // Events mit fester Zeit an ihren Typ angleichen (Puffer am Ende bei pauschalen Typen).
+  // Kurse mit fester Zeit an ihren Typ angleichen (Puffer am Ende bei pauschalen Typen).
   await pool.query(events.SYNC_FIXED_EVENTS_SQL, [null]);
 
   await pool.query("DELETE FROM sessions WHERE expires_at < now()");

@@ -1,4 +1,4 @@
-// Event-Typen (Vorlagen) und geplante Events: Prüfung der Eingaben und Terminberechnung.
+// Kurstypen (Vorlagen) und geplante Kurse: Prüfung der Eingaben und Terminberechnung.
 //
 // Stunden-Berechnung je Typ:
 //   faktor   – Brutto/Netto in Minuten pro 30 min geplanter Zeit
@@ -15,6 +15,8 @@
 //   max_stunden                   – höchstens so viele Sollstunden (brutto) für diesen Typ, über alle Pros
 //   series_times                  – Serie: eigene Zeit je Termin, z. B. [[840, 990], [600, 750], [840, 990]]
 //                                   (dann sind auch mehrere Termine am selben Tag möglich)
+//   nicht_parallel                – IDs der Kurstypen, die sich zeitlich nicht mit diesem überschneiden dürfen
+//                                   (gegenseitig gespeichert, gilt für alle Pros eines Plans)
 
 const crypto = require("crypto");
 
@@ -42,7 +44,7 @@ const SEED_SERIES_TYPES = [
   },
 ];
 
-// Einsatzbereich eines Event-Typs → Häkchen beim Pro (leer = alle Pros)
+// Einsatzbereich eines Kurstyps → Häkchen beim Pro (leer = alle Pros)
 const AREAS = {
   kurse: { label: "Kurse", proField: "kurse" },
   bambini: { label: "Bambini", proField: "bambinitraining" },
@@ -51,7 +53,7 @@ const AREAS = {
 
 const TYPE_COLUMNS = [
   "code", "einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_stunden", "name", "color", "calc", "brutto_min", "netto_min", "brutto_fix_min", "netto_fix_min",
-  "fixed_start_min", "fixed_end_min", "first_weekday", "series_offsets", "series_times",
+  "fixed_start_min", "fixed_end_min", "first_weekday", "series_offsets", "series_times", "nicht_parallel",
 ];
 
 class ValidationError extends Error {}
@@ -144,6 +146,10 @@ function normalizeType(body) {
       throw new ValidationError(`Termin ${i + 1} liegt am selben Tag wie Termin ${i} und muss nach dessen Ende inkl. Puffer beginnen.`);
     }
   }
+
+  // Kurstypen, mit denen sich dieser zeitlich nicht überschneiden darf (gegenseitig, in jedem Plan)
+  const others = Array.isArray(body.nicht_parallel) ? body.nicht_parallel : [];
+  t.nicht_parallel = [...new Set(others.map((v) => id(v, "Nicht parallel zu")))].sort((a, b) => a - b);
   return t;
 }
 
@@ -236,7 +242,7 @@ function times(type, body, index = 0) {
   return { start_min: start, end_min: bookedEnd(type, start, end) };
 }
 
-// Gleicht bestehende Events von Typen mit fester Zeit an die Typ-Einstellungen an
+// Gleicht bestehende Kurse von Typen mit fester Zeit an die Typ-Einstellungen an
 // (z. B. nach einer Änderung der Zeit oder der Brutto-Stunden). $1 = Typ-ID oder NULL für alle.
 // Bei Zeit je Termin gilt die Zeit des jeweiligen Termins (series_index).
 const SYNC_FIXED_EVENTS_SQL = `
@@ -270,7 +276,7 @@ function seriesDates(type, start, blocked) {
   return dates;
 }
 
-// Neues Event bzw. neue Serie: berechnet alle Termine aus Typ und Eingabe.
+// Neuer Kurs bzw. neue Serie: berechnet alle Termine aus Typ und Eingabe.
 // body.pros (optional) wählt pro Termin einen eigenen Pro, sonst gilt body.pro_id.
 // opts.blocked (optional): Tage, an denen der Typ nicht stattfindet (siehe seriesDates).
 function planNew(type, body, opts = {}) {
@@ -297,7 +303,7 @@ function planNew(type, body, opts = {}) {
   }));
 }
 
-// Bestehendes Event ändern. Termine einer Serie behalten Datum und Zeit,
+// Bestehenden Kurs ändern. Termine einer Serie behalten Datum und Zeit,
 // nur Pro und Notiz lassen sich pro Termin ändern.
 function planUpdate(existing, type, body, opts = {}) {
   const notiz = String(body.notiz || "").trim().slice(0, 500);
@@ -305,7 +311,7 @@ function planUpdate(existing, type, body, opts = {}) {
     return { ...existing, pro_id: id(body.pro_id, "Pro"), notiz };
   }
   if (type.series_offsets.length > 1) {
-    throw new ValidationError("Ein Serien-Typ kann nur neu angelegt werden, nicht aus einem bestehenden Event.");
+    throw new ValidationError("Ein Serien-Typ kann nur neu angelegt werden, nicht aus einem bestehenden Kurs.");
   }
   const date = isoDate(body.date);
   if (type.first_weekday !== null && weekdayOf(date) !== type.first_weekday) {

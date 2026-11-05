@@ -178,7 +178,7 @@
     }
   }
 
-  // Lädt Pros, Event-Typen und Events und verteilt sie an alle Ansichten.
+  // Lädt Pros, Kurstypen und Kurse und verteilt sie an alle Ansichten.
   async function loadData() {
     let types;
     let events;
@@ -194,7 +194,7 @@
       toast(err.message);
       return;
     }
-    // Kurse mit aktiver Schulferien-Regel (für die Serien-Vorschau im Event-Dialog)
+    // Kurse mit aktiver Schulferien-Regel (für die Serien-Vorschau im Kurs-Dialog)
     const holidayTypes = new Set(rules.filter((r) => r.aktiv && r.art === "ferien").flatMap((r) => r.type_ids));
     const data = { pros, types, events, holidayTypes };
     Events.setData(data);

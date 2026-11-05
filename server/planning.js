@@ -21,7 +21,7 @@ const inYear = (ev) => ev.date >= YEAR_FROM && ev.date <= YEAR_TO;
 
 async function loadType(db, typeId) {
   const { rows } = await db.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [typeId]);
-  if (!rows[0]) throw new eventsData.ValidationError("Event-Typ existiert nicht.");
+  if (!rows[0]) throw new eventsData.ValidationError("Kurstyp existiert nicht.");
   return rows[0];
 }
 
@@ -42,14 +42,14 @@ function clock(min) {
   return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 }
 
-// Brutto bzw. Netto eines Events in Minuten (wie im Frontend, public/js/events.js)
+// Brutto bzw. Netto eines Kurses in Minuten (wie im Frontend, public/js/events.js)
 function minutesOf(ev, type, mode) {
   if (!type) return 0;
   if (type.calc === "pauschal") return mode === "netto" ? type.netto_fix_min : type.brutto_fix_min;
   return ((ev.end_min - ev.start_min) * (mode === "netto" ? type.netto_min : type.brutto_min)) / 30;
 }
 
-// Überschneidung mit einem anderen Event desselben Pros im selben Plan?
+// Überschneidung mit einem anderen Kurs desselben Pros im selben Plan?
 async function assertFree(db, planId, ev, ignoreId, label) {
   const { rows } = await db.query(
     `SELECT 1 FROM events
@@ -57,10 +57,65 @@ async function assertFree(db, planId, ev, ignoreId, label) {
     [ev.pro_id, ev.date, ev.start_min, ev.end_min, ignoreId || 0, planId]
   );
   if (rows.length) {
-    const err = new eventsData.ValidationError(`${label}Der Pro hat am ${formatDate(ev.date)} in dieser Zeit bereits ein Event.`);
+    const err = new eventsData.ValidationError(`${label}Der Pro hat am ${formatDate(ev.date)} in dieser Zeit bereits einen Kurs.`);
     err.status = 409;
     throw err;
   }
+}
+
+// Kurstypen, die nicht parallel stattfinden dürfen: Überschneidet sich ein Termin (belegte Zeit inkl. Puffer)
+// im selben Plan mit einem Kurs eines dieser Typen – egal bei welchem Pro –, wird er abgelehnt.
+async function assertNotParallel(db, planId, type, events, label = "") {
+  if (!type.nicht_parallel?.length) return;
+  for (const ev of events) {
+    const { rows } = await db.query(
+      `SELECT t.name, p.name AS pro, e.start_min, e.end_min
+         FROM events e JOIN event_types t ON t.id = e.type_id JOIN pros p ON p.id = e.pro_id
+        WHERE e.plan_id = $1 AND e.date = $2 AND e.start_min < $4 AND e.end_min > $3
+          AND e.type_id = ANY($5::int[]) AND e.id <> $6
+        ORDER BY e.start_min LIMIT 1`,
+      [planId, ev.date, ev.start_min, ev.end_min, type.nicht_parallel, ev.id || 0]
+    );
+    if (rows[0]) {
+      const r = rows[0];
+      const err = new eventsData.ValidationError(
+        `${label}«${type.name}» darf nicht parallel zu «${r.name}» stattfinden: am ${formatDate(ev.date)} ist ${clock(r.start_min)}–${clock(r.end_min)} bereits «${r.name}» (${r.pro}) geplant.`
+      );
+      err.status = 409;
+      throw err;
+    }
+  }
+}
+
+// Speichert «nicht parallel zu» für einen Kurstyp und trägt es bei den Partnern gegenseitig ein.
+// Liefert einen Hinweis, falls bereits geplante Kurse dagegen verstossen (sie bleiben bestehen).
+async function syncNotParallel(db, typeId, list) {
+  const { rows } = await db.query("SELECT id FROM event_types WHERE id = ANY($1::int[]) AND id <> $2 ORDER BY id", [list, typeId]);
+  const ids = rows.map((r) => r.id);
+  await db.query("UPDATE event_types SET nicht_parallel = $1 WHERE id = $2", [ids, typeId]);
+  await db.query(
+    "UPDATE event_types SET nicht_parallel = array_append(nicht_parallel, $1::int) WHERE id = ANY($2::int[]) AND NOT ($1::int = ANY(nicht_parallel))",
+    [typeId, ids]
+  );
+  await db.query(
+    "UPDATE event_types SET nicht_parallel = array_remove(nicht_parallel, $1::int) WHERE id <> ALL($2::int[]) AND $1::int = ANY(nicht_parallel)",
+    [typeId, ids]
+  );
+  const { rows: clashes } = await db.query(
+    `SELECT tb.name, to_char(a.date, 'DD.MM.YYYY') AS datum, pl.name AS plan, count(*) OVER () AS total
+       FROM events a
+       JOIN events b ON b.plan_id = a.plan_id AND b.date = a.date AND b.id <> a.id
+                    AND a.start_min < b.end_min AND b.start_min < a.end_min AND b.type_id = ANY($2::int[])
+       JOIN event_types tb ON tb.id = b.type_id
+       JOIN plans pl ON pl.id = a.plan_id
+      WHERE a.type_id = $1
+      ORDER BY a.date LIMIT 3`,
+    [typeId, ids]
+  );
+  if (!clashes.length) return null;
+  const list3 = clashes.map((c) => `mit «${c.name}» am ${c.datum} (Plan «${c.plan}»)`).join(", ");
+  const total = Number(clashes[0].total);
+  return `Achtung: ${total} bereits geplante${total === 1 ? "r Termin überschneidet" : " Termine überschneiden"} sich: ${list3}${total > 3 ? " …" : ""}. Diese bleiben bestehen; bitte verschieben.`;
 }
 
 // Schulferien (Kanton Zug) an diesem Datum: Name der Ferien oder null (Feiertage zählen nicht)
@@ -223,6 +278,7 @@ async function overview(planId, { from, to, pro } = {}, db = pool) {
       bereich: eventsData.AREAS[t.einsatzbereich]?.label || "alle",
       einplanbar: t.einplanbar_von || t.einplanbar_bis ? `${t.einplanbar_von || "…"} bis ${t.einplanbar_bis || "…"}` : "ganzes Jahr",
       max_stunden: t.max_stunden,
+      nicht_parallel: (t.nicht_parallel || []).map((id) => typeById.get(id)?.code || typeById.get(id)?.name).filter(Boolean),
       name: t.name,
       stunden: t.calc === "pauschal"
         ? `pro Termin ${t.brutto_fix_min / 60} h brutto, ${t.netto_fix_min / 60} h netto`
@@ -263,9 +319,9 @@ function overviewText(o, { maxEvents = 400, parts = ["regeln", "pros", "typen", 
     }
   }
   if (parts.includes("typen")) {
-    lines.push("TYPEN (ID|Name|Einsatzbereich|einplanbar|max. Sollstunden|Stunden|Zeit|erster Wochentag|Termine Tage ab Start)");
+    lines.push("TYPEN (ID|Name|Einsatzbereich|einplanbar|max. Sollstunden|Stunden|Zeit|erster Wochentag|Termine Tage ab Start|nicht parallel zu)");
     for (const t of o.typen) {
-      lines.push([t.id || "-", t.name, t.bereich, t.einplanbar, t.max_stunden ?? "-", t.stunden, t.zeit, t.erster_wochentag || "-", t.termine_tage_ab_start.join(",")].join("|"));
+      lines.push([t.id || "-", t.name, t.bereich, t.einplanbar, t.max_stunden ?? "-", t.stunden, t.zeit, t.erster_wochentag || "-", t.termine_tage_ab_start.join(","), t.nicht_parallel.join(",") || "-"].join("|"));
     }
   }
   if (parts.includes("events")) {
@@ -316,7 +372,7 @@ async function eachItem(db, items, errors, fn) {
 // items: [{ typ|type_id, pro|pro_id, datum|date, von|start_min, bis|end_min, pros?, notiz? }] – Zeiten als «HH:MM» oder Minuten
 // pros: optional ein Pro pro Termin einer Serie (Name, Kürzel oder ID; leer = wie pro)
 async function bulkCreate(planId, items, { dryRun = false, userId = null } = {}) {
-  if (!Array.isArray(items) || !items.length) throw new PlanningError("Keine Events angegeben.");
+  if (!Array.isArray(items) || !items.length) throw new PlanningError("Keine Kurse angegeben.");
   if (items.length > 200) throw new PlanningError("Höchstens 200 Einträge pro Aufruf.");
   return transaction(dryRun, "created", async (db) => {
     const lk = await lookups(db);
@@ -325,7 +381,7 @@ async function bulkCreate(planId, items, { dryRun = false, userId = null } = {})
     await eachItem(db, items, errors, async (item, i) => {
       const label = items.length > 1 ? `Eintrag ${i + 1}: ` : "";
       const type = findType(lk, item.type_id ?? item.typ);
-      if (!type) throw new PlanningError(`${label}Event-Typ «${item.type_id ?? item.typ}» nicht gefunden.`);
+      if (!type) throw new PlanningError(`${label}Kurstyp «${item.type_id ?? item.typ}» nicht gefunden.`);
       const pros = Array.isArray(item.pros)
         ? item.pros.map((p, j) => (p === null || p === undefined || p === "" ? null : requirePro(lk, p, `${label}Termin ${j + 1}: `)))
         : undefined;
@@ -343,6 +399,7 @@ async function bulkCreate(planId, items, { dryRun = false, userId = null } = {})
       await assertRules(db, planId, type, planned, [], label);
       for (const ev of planned) {
         await assertFree(db, planId, ev, 0, `${label}${planned.length > 1 ? `Termin ${ev.series_index}: ` : ""}`);
+        await assertNotParallel(db, planId, type, [ev], `${label}${planned.length > 1 ? `Termin ${ev.series_index}: ` : ""}`);
         const { rows } = await db.query(
           `INSERT INTO events (plan_id, type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by)
            VALUES ($10, $1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${EVENT_FIELDS}, created_at`,
@@ -355,9 +412,9 @@ async function bulkCreate(planId, items, { dryRun = false, userId = null } = {})
   });
 }
 
-// ids: Event-IDs; serie: ganze Serie(n) mitlöschen
+// ids: Kurs-IDs; serie: ganze Serie(n) mitlöschen
 async function bulkDelete(planId, ids, { serie = false, dryRun = false } = {}) {
-  if (!Array.isArray(ids) || !ids.length) throw new PlanningError("Keine Events angegeben.");
+  if (!Array.isArray(ids) || !ids.length) throw new PlanningError("Keine Kurse angegeben.");
   return transaction(dryRun, "deleted", async (db) => {
     const clean = ids.map((v) => Number.parseInt(v, 10)).filter(Number.isInteger);
     const { rows } = await db.query(
@@ -369,7 +426,7 @@ async function bulkDelete(planId, ids, { serie = false, dryRun = false } = {}) {
       [clean, serie, planId]
     );
     const found = new Set(rows.map((r) => r.id));
-    const errors = clean.filter((id) => !found.has(id)).map((id) => ({ eintrag: id, fehler: `Event ${id} nicht gefunden.` }));
+    const errors = clean.filter((id) => !found.has(id)).map((id) => ({ eintrag: id, fehler: `Kurs ${id} nicht gefunden.` }));
     return { deleted: rows, errors, dryRun };
   });
 }
@@ -384,12 +441,12 @@ async function bulkUpdate(planId, changes, { dryRun = false } = {}) {
     const errors = [];
     await eachItem(db, changes, errors, async (c) => {
       const id = Number.parseInt(c.event_id, 10) || 0;
-      const label = `Event ${id}: `;
+      const label = `Kurs ${id}: `;
       const { rows } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE id = $1 AND plan_id = $2 FOR UPDATE`, [id, planId]);
       const current = rows[0];
       if (!current) throw new PlanningError(`${label}nicht gefunden.`);
       const type = current.series_id ? lk.types.find((t) => t.id === current.type_id) : findType(lk, c.typ ?? current.type_id);
-      if (!type) throw new PlanningError(`${label}Event-Typ «${c.typ}» nicht gefunden.`);
+      if (!type) throw new PlanningError(`${label}Kurstyp «${c.typ}» nicht gefunden.`);
       const has = (v) => v !== null && v !== undefined && v !== "";
       const ev = eventsData.planUpdate(current, type, {
         type_id: type.id,
@@ -405,6 +462,7 @@ async function bulkUpdate(planId, changes, { dryRun = false } = {}) {
       await assertCapacity(db, planId, type, minutesOf(ev, type, "brutto") - before, label);
       await assertRules(db, planId, type, [ev], type.id === current.type_id ? [current] : [], label);
       await assertFree(db, planId, ev, id, label);
+      if (!current.series_id) await assertNotParallel(db, planId, type, [ev], label);
       const { rows: done } = await db.query(
         `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
           WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
@@ -667,7 +725,7 @@ async function diagnoseRule(planId, value, db = pool) {
 }
 
 // Obergrenzen (genau, höchstens) dürfen durch neue Termine nicht überschritten werden.
-// added/removed: Events mit date, start_min, end_min (bei Änderungen der alte Stand in removed).
+// added/removed: Kurse mit date, start_min, end_min (bei Änderungen der alte Stand in removed).
 async function assertRules(db, planId, type, added, removed = [], label = "") {
   const rules = (await loadRules(db, planId)).filter((r) => r.art === "stunden" && r.type_id === type.id && rulesData.OPS[r.operator].upper);
   for (const rule of rules) {
@@ -685,7 +743,7 @@ async function assertRules(db, planId, type, added, removed = [], label = "") {
 }
 
 // Plant für jeden Pro Serien der gewählten Typen, bis die Ziel-Auslastung (brutto in % der Sollstunden,
-// gezählt wie in der Übersicht über alle Events) erreicht ist. Die Serien werden gleichmässig über den
+// gezählt wie in der Übersicht über alle Kurse) erreicht ist. Die Serien werden gleichmässig über den
 // Zeitraum verteilt; es gelten die Regeln des Tools (keine Überschneidung, Wochentag, feste Zeit, Einsatzbereich,
 // Typ-Maximum) und die aktiven Regeln, auf Wunsch zusätzlich die freien Wochentage der Pros.
 // Ganz oder gar nicht, eine Transaktion.
@@ -721,12 +779,12 @@ async function autoFill(
       : (pros?.length ? pros.map(requirePro) : lk.pros.filter((p) => p.sollstunden > 0))
           .map((pro) => ({ pro, percent: Number(ziel_prozent) }));
     const types = typen?.length
-      ? typen.map((t) => findType(lk, t) || (() => { throw new PlanningError(`Event-Typ «${t}» nicht gefunden.`); })())
+      ? typen.map((t) => findType(lk, t) || (() => { throw new PlanningError(`Kurstyp «${t}» nicht gefunden.`); })())
       : lk.types.filter((t) => t.fixed_start_min !== null);
     for (const t of types) {
       if (t.fixed_start_min === null) throw new PlanningError(`«${t.name}» hat keine feste Zeit und lässt sich nicht automatisch verteilen.`);
     }
-    if (!types.length && !regeln_erfuellen) throw new PlanningError("Keine Event-Typen mit fester Zeit vorhanden.");
+    if (!types.length && !regeln_erfuellen) throw new PlanningError("Keine Kurstypen mit fester Zeit vorhanden.");
 
     // Mögliche Starttage eines Typs (ganze Serie im Zeitraum und im einplanbaren Zeitraum des Typs),
     // in einer Reihenfolge, die den Zeitraum gleichmässig abdeckt.
@@ -750,11 +808,13 @@ async function autoFill(
     // Bestehende Belegung, geplante Stunden je Pro, verbrauchte Stunden je Typ und je Regel
     const { rows: existing } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE plan_id = $1`, [planId]);
     const busy = new Map(); // "pro|datum" → [[Beginn, Ende]]
+    const byDate = new Map(); // datum → [[Typ, Beginn, Ende]] (für «nicht parallel zu»)
     const planned = new Map();
     const typeUsed = new Map();
     const book = (ev) => {
       const key = `${ev.pro_id}|${ev.date}`;
       busy.set(key, [...(busy.get(key) || []), [ev.start_min, ev.end_min]]);
+      byDate.set(ev.date, [...(byDate.get(ev.date) || []), [ev.type_id, ev.start_min, ev.end_min]]);
     };
     for (const ev of existing) {
       book(ev);
@@ -802,6 +862,11 @@ async function autoFill(
       const freeDays = freeDaysOf(pro);
       if (series.some((ev) => freeDays.has(eventsData.weekdayOf(ev.date)) || absenceOn(pro, ev.date) || !free(ev))) return false;
       if (seriesOverlaps(series)) return false; // z. B. Puffer eines Termins reicht in den nächsten
+      if (type.nicht_parallel?.length) {
+        const avoid = new Set(type.nicht_parallel);
+        const clash = (ev) => (byDate.get(ev.date) || []).some(([t, s, e]) => avoid.has(t) && ev.start_min < e && ev.end_min > s);
+        if (series.some(clash)) return false;
+      }
       if (type.max_stunden && (typeUsed.get(type.id) || 0) + seriesMinutes(type, series.filter(inYear)) > type.max_stunden * 60 + 0.01) return false;
       for (const rule of rules) {
         if (!rulesData.OPS[rule.operator].upper) continue;
@@ -958,10 +1023,10 @@ function sameEvent(current, expected) {
 
 // Nimmt genau eine Sammel-Aktion zurück, ohne andere Daten zu berühren:
 // undo = { created: [Zeilen nachher] } | { deleted: [Zeilen] } | { updated: [Zeilen vorher], updated_after: [Zeilen nachher] }.
-// Wurde ein angelegtes oder geändertes Event seither weiter verändert, wird nichts zurückgenommen
-// (Konflikt statt stilles Überschreiben). Angelegte Events werden nur gelöscht, wenn auch der
+// Wurde ein angelegter oder geänderter Kurs seither weiter verändert, wird nichts zurückgenommen
+// (Konflikt statt stilles Überschreiben). Angelegte Kurse werden nur gelöscht, wenn auch der
 // Erstellungszeitpunkt passt (nach einer Wiederherstellung können IDs neu vergeben werden).
-// Ganz oder gar nicht; Konflikte (z. B. Überschneidung mit neueren Events) kommen als errors zurück.
+// Ganz oder gar nicht; Konflikte (z. B. Überschneidung mit neueren Kursen) kommen als errors zurück.
 async function undoChange(planId, undo) {
   return transaction(false, "done", async (db) => {
     const errors = [];
@@ -972,16 +1037,16 @@ async function undoChange(planId, undo) {
         [row.id, planId]
       );
       const current = rows[0];
-      // schon gelöscht oder ID inzwischen für ein anderes Event vergeben: nichts zu tun
+      // schon gelöscht oder ID inzwischen für einen anderen Kurs vergeben: nichts zu tun
       if (!current || new Date(current.created_at).getTime() !== new Date(row.created_at).getTime()) return;
       if (!sameEvent(current, row)) {
-        throw new PlanningError(`Event ${row.id} (${formatDate(current.date)}) wurde seither geändert.`);
+        throw new PlanningError(`Kurs ${row.id} (${formatDate(current.date)}) wurde seither geändert.`);
       }
       await db.query("DELETE FROM events WHERE id = $1", [row.id]);
       done++;
     });
     await eachItem(db, undo.deleted || [], errors, async (row) => {
-      const label = `Event ${row.id} (${formatDate(row.date)}): `;
+      const label = `Kurs ${row.id} (${formatDate(row.date)}): `;
       const { rows } = await db.query("SELECT 1 FROM events WHERE id = $1", [row.id]);
       if (rows.length) throw new PlanningError(`${label}existiert bereits wieder.`);
       await assertFree(db, planId, row, row.id, label);
@@ -993,14 +1058,14 @@ async function undoChange(planId, undo) {
             row.created_by ?? null, row.created_at ?? null, planId]
         );
       } catch (err) {
-        if (err.code === "23503") throw new PlanningError(`${label}Pro oder Event-Typ gibt es nicht mehr.`);
+        if (err.code === "23503") throw new PlanningError(`${label}Pro oder Kurstyp gibt es nicht mehr.`);
         throw err;
       }
       done++;
     });
     const afterById = new Map((undo.updated_after || []).map((r) => [r.id, r]));
     await eachItem(db, undo.updated || [], errors, async (row) => {
-      const label = `Event ${row.id}: `;
+      const label = `Kurs ${row.id}: `;
       const { rows } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE id = $1 AND plan_id = $2 FOR UPDATE`, [row.id, planId]);
       if (!rows.length) throw new PlanningError(`${label}wurde inzwischen gelöscht.`);
       if (afterById.has(row.id) && !sameEvent(rows[0], afterById.get(row.id))) {
@@ -1013,7 +1078,7 @@ async function undoChange(planId, undo) {
           [row.type_id, row.pro_id, row.date, row.start_min, row.end_min, row.notiz, row.id]
         );
       } catch (err) {
-        if (err.code === "23503") throw new PlanningError(`${label}Pro oder Event-Typ gibt es nicht mehr.`);
+        if (err.code === "23503") throw new PlanningError(`${label}Pro oder Kurstyp gibt es nicht mehr.`);
         throw err;
       }
       done++;
@@ -1024,18 +1089,18 @@ async function undoChange(planId, undo) {
 
 // Kurzbeschreibung für den Verlauf, z. B. «Platzreife Teil 1 A · 09.01.2027 · Yannick (4 Termine)»
 async function describeEvents(list) {
-  if (!list?.length) return "Event";
+  if (!list?.length) return "Kurs";
   const first = list[0];
   const { rows } = await pool.query(
     "SELECT (SELECT name FROM event_types WHERE id = $1) AS type, (SELECT name FROM pros WHERE id = $2) AS pro",
     [first.type_id, first.pro_id]
   );
   const count = list.length > 1 ? ` (${list.length} Termine)` : "";
-  return `${rows[0].type ?? "Event"} · ${formatDate(first.date)} · ${rows[0].pro ?? "?"}${count}`;
+  return `${rows[0].type ?? "Kurs"} · ${formatDate(first.date)} · ${rows[0].pro ?? "?"}${count}`;
 }
 
 module.exports = {
   TYPE_FIELDS, EVENT_FIELDS, PlanningError,
-  loadType, assertFree, assertArea, assertAvailable, blockedFor, assertCapacity, assertRules, ruleStatus, diagnoseRule, formatDate, clock, timeArg, minutesOf,
+  loadType, assertFree, assertNotParallel, syncNotParallel, assertArea, assertAvailable, blockedFor, assertCapacity, assertRules, ruleStatus, diagnoseRule, formatDate, clock, timeArg, minutesOf,
   overview, overviewText, bulkCreate, bulkDelete, bulkUpdate, autoFill, undoChange, describeEvents,
 };

@@ -1,4 +1,4 @@
-// Verlauf des aktuellen Plans: gespeicherte Stände der Events (Zuweisungen), mit «Wiederherstellen»
+// Verlauf des aktuellen Plans: gespeicherte Stände der Kurse (Zuweisungen), mit «Wiederherstellen»
 // (nur mit Bearbeitungsrecht am Plan).
 (function () {
   const { el } = window.Dates;
@@ -54,7 +54,7 @@
       } else if (ctx.canEdit()) {
         const btn = el("button", "btn sm", "Wiederherstellen");
         btn.type = "button";
-        btn.title = "Die Events (Zuweisungen) auf diesen Stand zurücksetzen; Pros und Event-Typen bleiben";
+        btn.title = "Die Kurse (Zuweisungen) auf diesen Stand zurücksetzen; Pros und Kurstypen bleiben";
         btn.addEventListener("click", () => restore(v, latestId));
         action.append(btn);
       }
@@ -63,7 +63,7 @@
         el("td", "tab", formatTime(v.created_at)),
         el("td", "", v.actor),
         el("td", "", v.description),
-        el("td", "tab muted", `${v.events} Events`),
+        el("td", "tab muted", `${v.events} Kurse`),
         action
       );
       tbody.append(tr);

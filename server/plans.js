@@ -1,5 +1,5 @@
 // Pläne: Jeder Benutzer hat eigene Pläne und kann sie mit anderen teilen (ansehen oder bearbeiten).
-// Termine, Regeln, Verlauf und KI-Chats gehören zu einem Plan; Pros und Event-Typen sind gemeinsam.
+// Termine, Regeln, Verlauf und KI-Chats gehören zu einem Plan; Pros und Kurstypen sind gemeinsam.
 // Admins (und der API-Schlüssel) sehen und bearbeiten alle Pläne.
 // Der aktuelle Plan kommt mit jeder Anfrage im Header «X-Plan-Id»; ohne Header gilt der erste
 // eigene Plan (Admins: der älteste Plan).

@@ -649,3 +649,26 @@ fieldset > .btn { align-self: flex-start; }
   .cal > .hd .hint, .cal > .hd .spacer { display: none; }
 }
 @media print { .side, .top { display: none; } .app { display: block; } }
+
+/* Mehrfachauswahl als Dropdown (z. B. «Darf nicht parallel stattfinden zu») */
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field-label { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.multi-dd { position: relative; }
+.multi-dd > summary {
+  list-style: none; display: flex; align-items: center; min-height: 34px; padding: 6px 30px 6px 10px; border: 1px solid var(--line-2);
+  border-radius: 8px; background: var(--surface); cursor: pointer; font-size: 13.5px; color: var(--ink); position: relative;
+}
+.multi-dd > summary::-webkit-details-marker { display: none; }
+.multi-dd > summary::after { content: "▾"; position: absolute; right: 10px; color: var(--ink-3); }
+.multi-dd[open] > summary { border-color: var(--accent); }
+.multi-dd-list {
+  margin-top: 4px; max-height: 220px; overflow-y: auto; border: 1px solid var(--line-2); border-radius: 8px;
+  background: var(--surface); padding: 4px;
+}
+.multi-dd-list label {
+  flex-direction: row; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: var(--ink);
+}
+.multi-dd-list label:hover { background: var(--accent-soft); }
+.multi-dd-list input { width: auto; height: auto; margin: 0; accent-color: var(--accent); }
+.type-sub { display: block; font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
