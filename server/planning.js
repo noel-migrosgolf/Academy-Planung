@@ -5,6 +5,7 @@
 const { pool } = require("./db");
 const eventsData = require("./events");
 const rulesData = require("./rules");
+const prosData = require("./pros");
 const FERIEN_ZUG = require("../public/js/ferien.js").filter((f) => f.type === "ferien");
 
 const TYPE_FIELDS = `id, ${eventsData.TYPE_COLUMNS.join(", ")}`;
@@ -223,7 +224,7 @@ const sumBrutto = (events, type) => events.reduce((sum, ev) => sum + minutesOf(e
 
 async function lookups(db) {
   const [pros, types] = await Promise.all([
-    db.query("SELECT id, code, name, sollstunden, freie_tage, kurse, bambinitraining, gce_training, abwesenheiten FROM pros ORDER BY sort_order, id"),
+    db.query("SELECT id, code, name, sollstunden, freie_tage, kurse, bambinitraining, gce_training, abwesenheiten, verfuegbarkeitsregel, wechsel FROM pros ORDER BY sort_order, id"),
     db.query(`SELECT ${TYPE_FIELDS} FROM event_types ORDER BY sort_order, id`),
   ]);
   return { pros: pros.rows, types: types.rows };
@@ -289,7 +290,13 @@ async function overview(planId, { from, to, pro } = {}, db = pool) {
         geplant_brutto_h: Math.round((sum.brutto / 60) * 100) / 100,
         geplant_netto_h: Math.round((sum.netto / 60) * 100) / 100,
         auslastung_prozent: p.sollstunden ? Math.round((sum.brutto / 60 / p.sollstunden) * 1000) / 10 : null,
-        freie_tage: p.freie_tage,
+        freie_tage: [
+          ...p.freie_tage.map((d) => d.slice(0, 2)),
+          ...(p.verfuegbarkeitsregel === "wochenend_wechsel_AB" ? [(() => {
+            const w = p.wechsel || prosData.DEFAULT_WECHSEL;
+            return `A/B-Wechsel ab ${w.a_woche}: A frei ${w.a_frei.map((d) => d.slice(0, 2)).join("+") || "-"}, B frei ${w.b_frei.map((d) => d.slice(0, 2)).join("+") || "-"}`;
+          })()] : []),
+        ],
         einsatz: [p.kurse && "Kurse", p.bambinitraining && "Bambini", p.gce_training && "GCE"].filter(Boolean),
         abwesenheiten: p.abwesenheiten,
       };
@@ -308,7 +315,7 @@ async function overview(planId, { from, to, pro } = {}, db = pool) {
         ? `je Termin ${t.series_times.map(([a, b]) => `${clock(a)}–${clock(b)}`).join(", ")}`
         : t.fixed_start_min !== null ? `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}` : "frei",
       erster_wochentag: t.first_weekday !== null ? eventsData.WEEKDAYS[t.first_weekday] : null,
-      termine_tage_ab_start: t.series_offsets,
+      termine_tage_ab_start: eventsData.isWeekly(t) ? ["wöchentlich bis Ende Zeitraum"] : t.series_offsets,
     })),
     events: inRange.map((ev) => {
       const t = typeById.get(ev.type_id);
@@ -318,7 +325,7 @@ async function overview(planId, { from, to, pro } = {}, db = pool) {
         zeit: `${clock(ev.start_min)}–${clock(ev.end_min)}`,
         pro: proById.get(ev.pro_id)?.name ?? "?",
         typ: t?.name ?? "?",
-        serie: ev.series_id ? `${ev.series_index}/${t?.series_offsets.length ?? "?"}` : null,
+        serie: ev.series_id ? `${ev.series_index}/${eventsData.isWeekly(t) ? "wöchentl." : t?.series_offsets.length ?? "?"}` : null,
         notiz: ev.notiz || null,
       };
     }),
@@ -500,7 +507,6 @@ function spreadOrder(n) {
   return [...Array(n).keys()].sort((a, b) => ((a * phi) % 1) - ((b * phi) % 1));
 }
 
-const WEEKDAY_INDEX = Object.fromEntries(eventsData.WEEKDAYS.map((d, i) => [d.toLowerCase(), i]));
 
 // --- Regeln (server/rules.js) ---
 
@@ -725,16 +731,15 @@ async function diagnoseRule(planId, value, db = pool) {
   for (let d = from; d <= to; d = eventsData.addDays(d, 1)) {
     if (type.first_weekday !== null && eventsData.weekdayOf(d) !== type.first_weekday) continue;
     if (blocked?.(d)) continue;
-    if (eventsData.seriesDates(type, d, blocked).at(-1) > to) continue;
-    if (!starts++) seriesHours = eventsData.planNew(type, { pro_id: pros[0].id, date: d }, { blocked }).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
+    if (eventsData.seriesDates(type, d, blocked, 0, to).at(-1) > to) continue;
+    if (!starts++) seriesHours = eventsData.planNew(type, { pro_id: pros[0].id, date: d }, { blocked, bis: to }).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
     let any = false;
     let anyFreeDays = false;
     for (const pro of pros) {
-      const series = eventsData.planNew(type, { pro_id: pro.id, date: d }, { blocked });
+      const series = eventsData.planNew(type, { pro_id: pro.id, date: d }, { blocked, bis: to });
       if (!series.every(isFree)) continue;
       any = true;
-      const off = new Set((pro.freie_tage || []).map((x) => WEEKDAY_INDEX[String(x).toLowerCase()]));
-      if (!series.some((ev) => off.has(eventsData.weekdayOf(ev.date)))) anyFreeDays = true;
+      if (!series.some((ev) => prosData.freeReason(pro, ev.date))) anyFreeDays = true;
     }
     if (any) withPro++;
     if (anyFreeDays) withProFreeDays++;
@@ -813,7 +818,7 @@ async function planChange(db, planId, existing, type, body) {
   }
 
   const ids = changes.map((c) => c.before.id);
-  const { rows: pros } = await db.query("SELECT id, name, abwesenheiten, kurse, bambinitraining, gce_training FROM pros WHERE id = ANY($1::int[])",
+  const { rows: pros } = await db.query("SELECT id, name, abwesenheiten, kurse, bambinitraining, gce_training, freie_tage, verfuegbarkeitsregel, wechsel FROM pros WHERE id = ANY($1::int[])",
     [[...new Set(changes.map((c) => c.after.pro_id))]]);
   const proById = new Map(pros.map((p) => [p.id, p]));
   const area = eventsData.AREAS[type.einsatzbereich];
@@ -839,6 +844,8 @@ async function planChange(db, planId, existing, type, body) {
     if (!pro) continue;
     if (a.pro_id !== b.pro_id && area && !pro[area.proField]) add(konflikte, a, `«${pro.name}» ist nicht im Einsatzbereich ${area.label}.`);
     if (moved || a.pro_id !== b.pro_id) {
+      const off = prosData.freeReason(pro, a.date);
+      if (off) add(hinweise, a, `${pro.name}: ${off} (${formatDate(a.date)}).`);
       const absence = absenceOn(pro, a.date);
       if (absence) add(konflikte, a, `«${pro.name}» ist am ${formatDate(a.date)} abwesend${absence.grund ? ` (${absence.grund})` : ""}.`);
     }
@@ -966,6 +973,8 @@ async function autoFill(
     // Mögliche Starttage eines Typs (ganze Serie im Zeitraum und im einplanbaren Zeitraum des Typs),
     // in einer Reihenfolge, die den Zeitraum gleichmässig abdeckt.
     // Kurse mit Schulferien-Regel: kein Start an gesperrten Tagen, Serien überspringen gesperrte Wochen.
+    // Wöchentliche Kurse laufen ab Beginn des Zeitraums: nur die ersten möglichen Starttage (Reserve,
+    // falls am ersten niemand Zeit hat), in zeitlicher Reihenfolge.
     function candidatesFor(t, rangeFrom, rangeTo) {
       const start = t.einplanbar_von && t.einplanbar_von > rangeFrom ? t.einplanbar_von : rangeFrom;
       const end = t.einplanbar_bis && t.einplanbar_bis < rangeTo ? t.einplanbar_bis : rangeTo;
@@ -974,13 +983,15 @@ async function autoFill(
       for (let d = start; d <= end; d = eventsData.addDays(d, 1)) {
         if (t.first_weekday !== null && eventsData.weekdayOf(d) !== t.first_weekday) continue;
         if (blocked?.(d)) continue;
-        const dates = eventsData.seriesDates(t, d, blocked);
+        const dates = eventsData.seriesDates(t, d, blocked, 0, end);
         if (dates[dates.length - 1] > end) continue;
         list.push({ type: t, date: d, dates });
+        if (eventsData.isWeekly(t) && list.length >= 4) break;
       }
       return list;
     }
     const spread = (list) => spreadOrder(list.length).map((i) => list[i]);
+    const order = (t, list) => (eventsData.isWeekly(t) ? list : spread(list));
 
     // Bestehende Belegung, geplante Stunden je Pro, verbrauchte Stunden je Typ und je Regel
     const { rows: existing } = await db.query(`SELECT ${EVENT_FIELDS} FROM events WHERE plan_id = $1`, [planId]);
@@ -1005,7 +1016,9 @@ async function autoFill(
     const rules = allRules.filter((r) => r.art === "stunden").map((r) => ({ ...r, type: typeById.get(r.type_id) }));
     // Anteil-Regeln (Wochentage): Brutto-Minuten an den gewählten Tagen und insgesamt
     const blockers = new Map(lk.types.map((t) => [t.id, blockerOf(allRules, t.id)]));
-    const planOpts = (t) => (blockers.get(t.id) ? { blocked: blockers.get(t.id) } : {});
+    const planOpts = (t) => ({ ...(blockers.get(t.id) ? { blocked: blockers.get(t.id) } : {}), bis: to });
+    // Wöchentliche Kurse: beim Auslasten eine Gruppe (Serie) je Kurstyp; schon geplante zählen
+    const weeklyDone = new Set(existing.filter((ev) => eventsData.isWeekly(typeById.get(ev.type_id))).map((ev) => ev.type_id));
     const shareRules = allRules.filter((r) => r.art === "wochentage")
       .map((r) => ({ ...r, ids: new Set(r.type_ids), on: 0, total: 0 }));
     const shareAdd = (rule, list) => {
@@ -1028,17 +1041,16 @@ async function autoFill(
     }
     const rulesBefore = new Map(ruleUsed);
 
-    const freeDaysOf = (pro) => freie_tage_beachten
-      ? new Set((pro.freie_tage || []).map((d) => WEEKDAY_INDEX[String(d).toLowerCase()]))
-      : new Set();
+    // Freie Tage: feste freie Wochentage und Wochenend-Wechsel A/B (siehe pros.freeReason)
+    const isOff = (pro, date) => freie_tage_beachten && !!prosData.freeReason(pro, date);
     const free = (ev) => !(busy.get(`${ev.pro_id}|${ev.date}`) || []).some(([s, e]) => ev.start_min < e && ev.end_min > s);
     const seriesMinutes = (type, series) => series.reduce((sum, ev) => sum + minutesOf(ev, type, "brutto"), 0);
 
     // Darf diese Serie so eingeplant werden? (Einsatzbereich, frei, freie Tage, Typ-Maximum, Regel-Obergrenzen)
     function fits(type, series, pro) {
       if (!areaAllows(type, pro)) return false;
-      const freeDays = freeDaysOf(pro);
-      if (series.some((ev) => freeDays.has(eventsData.weekdayOf(ev.date)) || absenceOn(pro, ev.date) || !free(ev))) return false;
+      if (!catchUp && weeklyDone.has(type.id)) return false;
+      if (series.some((ev) => isOff(pro, ev.date) || absenceOn(pro, ev.date) || !free(ev))) return false;
       if (seriesOverlaps(series)) return false; // z. B. Puffer eines Termins reicht in den nächsten
       if (type.nicht_parallel?.length) {
         const avoid = new Set(type.nicht_parallel);
@@ -1064,6 +1076,7 @@ async function autoFill(
     const toInsert = [];
     const perPro = new Map(); // Pro-ID → Map(Typ → Anzahl Serien)
     function commit(type, series, pro) {
+      if (eventsData.isWeekly(type)) weeklyDone.add(type.id);
       const minutes = seriesMinutes(type, series.filter(inYear));
       for (const ev of series) {
         book(ev);
@@ -1102,7 +1115,7 @@ async function autoFill(
           return op === "gt" ? h > rule.stunden + rulesData.EPS : h >= rule.stunden - rulesData.EPS;
         };
         const touches = (dates) => dates.some((d) => d >= rule.von && d <= rule.bis);
-        for (const { type, date } of spread(candidatesFor(rule.type, from, to).filter((c) => touches(c.dates)))) {
+        for (const { type, date } of order(rule.type, candidatesFor(rule.type, from, to).filter((c) => touches(c.dates)))) {
           if (done()) break;
           // Beitrag zur Regel: Brutto-Minuten der Termine im Regelzeitraum (unabhängig vom Pro)
           const sample = eventsData.planNew(type, { pro_id: 1, date }, planOpts(type));
@@ -1153,7 +1166,7 @@ async function autoFill(
       for (const { type, anzahl } of catchUp) {
         let done = 0;
         let full = false;
-        for (const { date } of spread(candidatesFor(type, from, to))) {
+        for (const { date } of order(type, candidatesFor(type, from, to))) {
           if (done >= anzahl) break;
           const r = placeBalanced(type, date, ziel_ueberschreiten);
           if (r === "voll") { full = true; break; }
@@ -1168,7 +1181,7 @@ async function autoFill(
       // 2a) Priorisierte Kurstypen der Reihe nach verteilen, solange Pros Platz bis zum Ziel haben
       for (const [i, type] of priority.entries()) {
         let done = 0;
-        for (const { date } of spread(candidatesFor(type, from, to))) {
+        for (const { date } of order(type, candidatesFor(type, from, to))) {
           const r = placeBalanced(type, date);
           if (r === "voll") break;
           if (r === "ok") done++;
@@ -1176,8 +1189,12 @@ async function autoFill(
         typen_ergebnis.push({ prioritaet: i + 1, typ: typeLabel(type), geplant: done, ...(limitHint(type) ? { hinweis: limitHint(type) } : {}) });
       }
       // 2b) Ziel-Auslastung je Pro mit den übrigen Kurstypen auffüllen
-      const ordered = spread(rest.flatMap((t) => candidatesFor(t, from, to))
-        .sort((a, b) => a.date.localeCompare(b.date) || a.type.id - b.type.id));
+      const weekly = rest.filter((t) => eventsData.isWeekly(t));
+      const ordered = [
+        ...weekly.flatMap((t) => candidatesFor(t, from, to)),
+        ...spread(rest.filter((t) => !weekly.includes(t)).flatMap((t) => candidatesFor(t, from, to))
+          .sort((a, b) => a.date.localeCompare(b.date) || a.type.id - b.type.id)),
+      ];
       for (const { pro } of targets) {
         if (!pro.sollstunden || !rest.some((t) => areaAllows(t, pro))) continue;
         const goal = goalOf.get(pro.id);

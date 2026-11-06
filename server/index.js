@@ -154,8 +154,14 @@ api.post("/pros", auth.requireDataAdmin, (req, res) =>
 );
 
 api.put("/pros/:id", auth.requireDataAdmin, (req, res) =>
-  savePro(res, () => {
-    const pro = prosData.normalize(req.body);
+  savePro(res, async () => {
+    // Fehlt der Wochenend-Wechsel in der Anfrage (ältere Seite im Browser-Cache), bleibt er unverändert.
+    const body = { ...req.body };
+    if (!("wechsel" in body)) {
+      const { rows: old } = await pool.query("SELECT wechsel FROM pros WHERE id = $1", [Number.parseInt(req.params.id, 10) || 0]);
+      body.wechsel = old[0]?.wechsel ?? null;
+    }
+    const pro = prosData.normalize(body);
     const sets = prosData.COLUMNS.map((c, i) => `${c} = $${i + 1}`).join(", ");
     return pool.query(
       `UPDATE pros SET ${sets} WHERE id = $${prosData.COLUMNS.length + 1} RETURNING ${PRO_FIELDS}`,
@@ -230,7 +236,7 @@ api.put("/event-types/:id", auth.requireDataAdmin, (req, res) =>
     // Fehlen neuere Felder in der Anfrage (z. B. ältere Seite im Browser-Cache), bleiben sie unverändert.
     const body = { ...req.body };
     const { rows: old } = await pool.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [typeId]);
-    for (const key of ["einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_stunden", "nicht_parallel"]) {
+    for (const key of ["einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_stunden", "nicht_parallel", "wiederholung"]) {
       if (!(key in body)) body[key] = old[0]?.[key] ?? null;
     }
     const t = eventsData.normalizeType(body);

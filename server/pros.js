@@ -1,6 +1,6 @@
 // Einstellungen der Pros: Startdaten und Prüfung der Eingaben.
 
-const { validDate: isDate } = require("./events");
+const { validDate: isDate, weekdayOf, addDays } = require("./events");
 
 const WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
 const AVAILABILITY_RULES = ["wochenend_wechsel_AB"];
@@ -18,8 +18,30 @@ const SEED = [
 
 const COLUMNS = [
   "code", "name", "sollstunden", "bambinitraining", "kurse", "gce_training",
-  "freie_tage", "auslastung_soll_prozent", "abwesenheiten", "verfuegbarkeitsregel",
+  "freie_tage", "auslastung_soll_prozent", "abwesenheiten", "verfuegbarkeitsregel", "wechsel",
 ];
+
+// Wochenend-Wechsel A/B: A- und B-Wochen wechseln sich ab, beginnend mit der A-Woche ab a_woche (Montag);
+// in A-Wochen sind die Tage a_frei frei, in B-Wochen die Tage b_frei (z. B. A: Fr frei, Sa/So Arbeit;
+// B: Fr Arbeit, Sa/So frei). Feste freie Tage (freie_tage) gelten zusätzlich in jeder Woche.
+const DEFAULT_WECHSEL = { a_woche: "2027-01-04", a_frei: ["Freitag"], b_frei: ["Samstag", "Sonntag"] };
+
+const mondayOf = (iso) => addDays(iso, -weekdayOf(iso));
+
+function abWeek(wechsel, date) {
+  const weeks = Math.round((Date.parse(mondayOf(date)) - Date.parse(mondayOf(wechsel.a_woche))) / (7 * 86400000));
+  return weeks % 2 === 0 ? "A" : "B";
+}
+
+// Hat der Pro an diesem Datum frei (fester freier Tag oder Wochenend-Wechsel)? Grund als Text oder null.
+function freeReason(pro, date) {
+  const day = WEEKDAYS[weekdayOf(date)];
+  if ((pro.freie_tage || []).includes(day)) return `${day} ist ein freier Tag`;
+  const w = pro.verfuegbarkeitsregel === "wochenend_wechsel_AB" ? pro.wechsel || DEFAULT_WECHSEL : null;
+  if (!w) return null;
+  const ab = abWeek(w, date);
+  return (ab === "A" ? w.a_frei : w.b_frei).includes(day) ? `${day} frei (${ab}-Woche, Wochenend-Wechsel)` : null;
+}
 
 class ValidationError extends Error {}
 
@@ -47,6 +69,17 @@ function normalize(body) {
 
   const regel = body.verfuegbarkeitsregel || null;
   if (regel !== null && !AVAILABILITY_RULES.includes(regel)) throw new ValidationError("Ungültige Verfügbarkeitsregel.");
+  let wechsel = null;
+  if (regel === "wochenend_wechsel_AB") {
+    const w = body.wechsel || DEFAULT_WECHSEL;
+    const days = (list, label) => {
+      const arr = Array.isArray(list) ? list : [];
+      if (arr.some((d) => !WEEKDAYS.includes(d))) throw new ValidationError(`Wochenend-Wechsel: ungültiger Wochentag (${label}).`);
+      return WEEKDAYS.filter((d) => arr.includes(d));
+    };
+    if (!isDate(String(w.a_woche || ""))) throw new ValidationError("Wochenend-Wechsel: bitte ein Datum in einer A-Woche angeben.");
+    wechsel = { a_woche: mondayOf(w.a_woche), a_frei: days(w.a_frei, "A-Woche"), b_frei: days(w.b_frei, "B-Woche") };
+  }
 
   const abwesenheiten = (Array.isArray(body.abwesenheiten) ? body.abwesenheiten : []).map((a) => {
     const von = String(a?.von || "");
@@ -67,12 +100,13 @@ function normalize(body) {
     auslastung_soll_prozent: wholeNumber(body.auslastung_soll_prozent ?? 100, "Soll-Auslastung", 200),
     abwesenheiten,
     verfuegbarkeitsregel: regel,
+    wechsel,
   };
 }
 
 // Werte in der Reihenfolge von COLUMNS (abwesenheiten als JSON).
 function values(pro) {
-  return COLUMNS.map((c) => (c === "abwesenheiten" ? JSON.stringify(pro[c]) : pro[c]));
+  return COLUMNS.map((c) => (c === "abwesenheiten" || c === "wechsel" ? (pro[c] === null ? null : JSON.stringify(pro[c])) : pro[c]));
 }
 
-module.exports = { SEED, COLUMNS, WEEKDAYS, ValidationError, normalize, values };
+module.exports = { SEED, COLUMNS, WEEKDAYS, DEFAULT_WECHSEL, ValidationError, normalize, values, freeReason, abWeek };

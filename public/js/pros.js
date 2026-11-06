@@ -5,6 +5,17 @@
 
   const WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
   const RULES = { wochenend_wechsel_AB: "Wochenend-Wechsel A/B" };
+  const DEFAULT_WECHSEL = { a_woche: "2027-01-04", a_frei: ["Freitag"], b_frei: ["Samstag", "Sonntag"] }; // wie server/pros.js
+
+  // «Wochenend-Wechsel A/B: A-Wochen (ab 04.01.2027) frei Fr · B-Wochen frei Sa, So»
+  function ruleText(pro) {
+    const name = RULES[pro.verfuegbarkeitsregel] || pro.verfuegbarkeitsregel;
+    if (pro.verfuegbarkeitsregel !== "wochenend_wechsel_AB") return name;
+    const w = pro.wechsel || DEFAULT_WECHSEL;
+    const days = (list) => (list.length ? list.map((d) => d.slice(0, 2)).join(", ") : "nichts");
+    const start = `${w.a_woche.slice(8, 10)}.${w.a_woche.slice(5, 7)}.${w.a_woche.slice(0, 4)}`;
+    return `${name}: A-Wochen (ab ${start}) frei ${days(w.a_frei)} · B-Wochen frei ${days(w.b_frei)}`;
+  }
 
   let ctx = null; // { api, toast, reload }
   let editing = null; // Pro im Dialog, null = neuer Pro
@@ -91,7 +102,7 @@
 
     const rows = el("div", "pro-rows");
     rows.append(row("Freie Tage", pro.freie_tage.length ? pro.freie_tage.join(", ") : "keine"));
-    if (pro.verfuegbarkeitsregel) rows.append(row("Regel", RULES[pro.verfuegbarkeitsregel] || pro.verfuegbarkeitsregel));
+    if (pro.verfuegbarkeitsregel) rows.append(row("Regel", ruleText(pro)));
     rows.append(row("Soll-Auslastung", `${pro.auslastung_soll_prozent} %`));
     rows.append(row("Abwesenheiten", pro.abwesenheiten.length ? pro.abwesenheiten.map(absenceText).join("\n") : "keine"));
     c.append(rows);
@@ -148,6 +159,11 @@
     f.gce_training.checked = p.gce_training;
     f.verfuegbarkeitsregel.value = p.verfuegbarkeitsregel || "";
     $$days().forEach((cb) => (cb.checked = p.freie_tage.includes(cb.value)));
+    const w = p.wechsel || DEFAULT_WECHSEL;
+    f.a_woche.value = w.a_woche;
+    document.querySelectorAll("#pro-a-frei input").forEach((cb) => (cb.checked = w.a_frei.includes(cb.value)));
+    document.querySelectorAll("#pro-b-frei input").forEach((cb) => (cb.checked = w.b_frei.includes(cb.value)));
+    $("#pro-wechsel").hidden = f.verfuegbarkeitsregel.value !== "wochenend_wechsel_AB";
     $("#pro-absences").replaceChildren(...p.abwesenheiten.map(absenceRow));
 
     $("#dlg-pro").showModal();
@@ -169,6 +185,13 @@
       gce_training: f.gce_training.checked,
       freie_tage: [...$$days()].filter((cb) => cb.checked).map((cb) => cb.value),
       verfuegbarkeitsregel: f.verfuegbarkeitsregel.value || null,
+      wechsel: f.verfuegbarkeitsregel.value === "wochenend_wechsel_AB"
+        ? {
+          a_woche: f.a_woche.value,
+          a_frei: [...document.querySelectorAll("#pro-a-frei input:checked")].map((cb) => cb.value),
+          b_frei: [...document.querySelectorAll("#pro-b-frei input:checked")].map((cb) => cb.value),
+        }
+        : null,
       abwesenheiten: [...document.querySelectorAll("#pro-absences .absence")]
         .map((r) => {
           const [von, bis, grund] = r.querySelectorAll("input");
@@ -181,17 +204,21 @@
   function init(context) {
     ctx = context;
 
-    $("#pro-days").replaceChildren(
-      ...WEEKDAYS.map((day) => {
-        const label = el("label", "check day");
-        const cb = el("input");
-        cb.type = "checkbox";
-        cb.value = day;
-        label.append(cb, document.createTextNode(day.slice(0, 2)));
-        label.title = day;
-        return label;
-      })
-    );
+    const dayBoxes = () => WEEKDAYS.map((day) => {
+      const label = el("label", "check day");
+      const cb = el("input");
+      cb.type = "checkbox";
+      cb.value = day;
+      label.append(cb, document.createTextNode(day.slice(0, 2)));
+      label.title = day;
+      return label;
+    });
+    $("#pro-days").replaceChildren(...dayBoxes());
+    $("#pro-a-frei").replaceChildren(...dayBoxes());
+    $("#pro-b-frei").replaceChildren(...dayBoxes());
+    $("#pro-edit-form").elements.verfuegbarkeitsregel.addEventListener("change", (e) => {
+      $("#pro-wechsel").hidden = e.target.value !== "wochenend_wechsel_AB";
+    });
 
     $("#btn-new-pro").addEventListener("click", () => openDialog(null));
     $("#pro-absence-add").addEventListener("click", () => $("#pro-absences").append(absenceRow()));

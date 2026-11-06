@@ -612,6 +612,15 @@
             <option value="wochenend_wechsel_AB">Wochenend-Wechsel A/B</option>
           </select>
         </label>
+        <fieldset id="pro-wechsel" hidden>
+          <legend>Wochenend-Wechsel A/B</legend>
+          <label>A-Woche (ein beliebiger Tag darin)
+            <input type="date" name="a_woche">
+          </label>
+          <div class="field"><span class="field-label">Frei in A-Wochen</span><div class="checks days" id="pro-a-frei"></div></div>
+          <div class="field"><span class="field-label">Frei in B-Wochen</span><div class="checks days" id="pro-b-frei"></div></div>
+          <p class="note" id="pro-wechsel-note">A- und B-Wochen wechseln sich jede Woche ab. Die freien Tage oben gelten zusätzlich in jeder Woche. Wird beim Auslasten mit «Freie Tage der Pros beachten» eingehalten und beim Planen von Hand als Hinweis gezeigt.</p>
+        </fieldset>
 
         <fieldset>
           <legend>Abwesenheiten</legend>
@@ -763,8 +772,14 @@
             <input name="fixed_end" type="time" step="300">
           </label>
         </div>
+        <label>Termine
+          <select name="wiederholung" class="fsel">
+            <option value="">Einzeltermin oder Serie mit festen Abständen</option>
+            <option value="woechentlich">Wöchentlich im einplanbaren Zeitraum (regelmässiger Kurs)</option>
+          </select>
+        </label>
         <div class="grid2">
-          <label>Erster Termin nur am
+          <label><span id="type-weekday-label">Erster Termin nur am</span>
             <select name="first_weekday" class="fsel">
               <option value="">beliebigen Tag</option>
               <option value="0">Montag</option>
@@ -776,7 +791,7 @@
               <option value="6">Sonntag</option>
             </select>
           </label>
-          <label>Termine: Abstand in Tagen
+          <label id="type-offsets-wrap">Termine: Abstand in Tagen
             <input name="series_offsets" type="text" placeholder="0" title="Tage nach dem ersten Termin, z. B. 0, 1, 7, 8 = Sa, So, Sa, So">
           </label>
         </div>

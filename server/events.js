@@ -15,6 +15,9 @@
 //   max_stunden                   – höchstens so viele Sollstunden (brutto) für diesen Typ, über alle Pros
 //   series_times                  – Serie: eigene Zeit je Termin, z. B. [[840, 990], [600, 750], [840, 990]]
 //                                   (dann sind auch mehrere Termine am selben Tag möglich)
+//   wiederholung                  – «woechentlich»: regelmässiger Kurs, jede Woche am Wochentag first_weekday
+//                                   vom gewählten Start bis zum Ende des einplanbaren Zeitraums (statt
+//                                   series_offsets); höchstens so viele Termine, wie max_stunden erlaubt
 //   nicht_parallel                – IDs der Kurstypen, die sich zeitlich nicht mit diesem überschneiden dürfen
 //                                   (gegenseitig gespeichert, gilt für alle Pros eines Plans)
 
@@ -53,7 +56,7 @@ const AREAS = {
 
 const TYPE_COLUMNS = [
   "code", "einsatzbereich", "einplanbar_von", "einplanbar_bis", "max_stunden", "name", "color", "calc", "brutto_min", "netto_min", "brutto_fix_min", "netto_fix_min",
-  "fixed_start_min", "fixed_end_min", "first_weekday", "series_offsets", "series_times", "nicht_parallel",
+  "fixed_start_min", "fixed_end_min", "first_weekday", "series_offsets", "series_times", "nicht_parallel", "wiederholung",
 ];
 
 class ValidationError extends Error {}
@@ -127,6 +130,11 @@ function normalizeType(body) {
 
   t.first_weekday = empty(body.first_weekday) ? null : int(body.first_weekday, "Wochentag", 0, 6);
 
+  t.wiederholung = body.wiederholung === "woechentlich" ? "woechentlich" : null;
+  if (t.wiederholung) {
+    if (t.first_weekday === null) throw new ValidationError("Wöchentlich: bitte den Wochentag wählen («Erster Termin nur am»).");
+    body = { ...body, series_offsets: [0], series_times: null };
+  }
   const offsets = Array.isArray(body.series_offsets) && body.series_offsets.length ? body.series_offsets : [0];
   t.series_offsets = offsets.map((o) => int(o, "Abstand der Termine (Tage)", 0, 365));
   if (t.series_offsets[0] !== 0) throw new ValidationError("Der erste Termin hat immer den Abstand 0.");
@@ -263,7 +271,19 @@ const SYNC_FIXED_EVENTS_SQL = `
 // gibt für gesperrte Tage einen Grund zurück («findet nicht in den Schulferien statt (…)»): Der Start
 // darf nicht gesperrt sein, spätere Termine rutschen samt allen folgenden um je eine Woche weiter.
 // from: ab welchem Termin (0-basiert) gerechnet wird, start ist dann dessen Datum (Serie ab hier verschieben)
-function seriesDates(type, start, blocked, from = 0) {
+// Wöchentliche Kurse: jede Woche ab start bis zum Ende des einplanbaren Zeitraums (bzw. bis «bis», falls
+// früher, z. B. Zeitraum beim Auslasten); gesperrte Wochen (Schulferien-Regel) fallen weg.
+function seriesDates(type, start, blocked, from = 0, bis = null) {
+  if (isWeekly(type)) {
+    const hit = blocked?.(start);
+    if (hit) throw new ValidationError(`«${type.name}» ${hit}.`);
+    const windowEnd = type.einplanbar_bis || `${start.slice(0, 4)}-12-31`;
+    const end = bis && bis < windowEnd ? bis : windowEnd;
+    const cap = weeklyCap(type);
+    const dates = [];
+    for (let d = start; d <= end && dates.length < cap; d = addDays(d, 7)) if (!blocked?.(d)) dates.push(d);
+    return dates;
+  }
   const offsets = type.series_offsets;
   if (!blocked) return offsets.slice(from).map((offset) => addDays(start, offset - offsets[from]));
   const hit = blocked(start);
@@ -280,6 +300,23 @@ function seriesDates(type, start, blocked, from = 0) {
   return dates;
 }
 
+function isWeekly(type) {
+  return type?.wiederholung === "woechentlich";
+}
+
+function isSeries(type) {
+  return isWeekly(type) || type.series_offsets.length > 1;
+}
+
+// Wöchentlich: höchstens so viele Termine, wie die Max. Sollstunden des Typs zulassen (sonst unbegrenzt)
+function weeklyCap(type) {
+  if (!type.max_stunden) return Infinity;
+  const perTermin = type.calc === "pauschal"
+    ? type.brutto_fix_min
+    : type.fixed_start_min !== null ? ((type.fixed_end_min - type.fixed_start_min) * type.brutto_min) / 30 : 0;
+  return perTermin > 0 ? Math.max(1, Math.floor((type.max_stunden * 60 + 0.01) / perTermin)) : Infinity;
+}
+
 // Neue Daten beim Verschieben einer Serie: Termin «index» (1-basiert) kommt auf «date»; verschoben werden
 // bei «folgende» dieser und alle späteren Termine, bei «alle» die ganze Serie um dieselbe Anzahl Tage
 // ab Termin 1. Die Abstände der Serie (und das Überspringen der Schulferien) werden neu angewendet;
@@ -292,7 +329,7 @@ function movedSeriesDates(type, termine, index, date, scope, blocked) {
   const fromIndex = scope === "alle" ? sorted[0].series_index : index;
   const start = scope === "alle" ? addDays(sorted[0].date, delta) : date;
   const moved = sorted.filter((t) => t.series_index >= fromIndex);
-  const fits = type.series_offsets.length === sorted.length && sorted.every((t, i) => t.series_index === i + 1);
+  const fits = !isWeekly(type) && type.series_offsets.length === sorted.length && sorted.every((t, i) => t.series_index === i + 1);
   // Passt die Serie nicht mehr zum Kurstyp (Termine geändert), alle betroffenen Termine einfach mitschieben
   const dates = fits ? seriesDates(type, start, blocked, fromIndex - 1) : moved.map((t) => addDays(t.date, delta));
   return new Map(moved.map((t, i) => [t.series_index, dates[i]]));
@@ -300,23 +337,23 @@ function movedSeriesDates(type, termine, index, date, scope, blocked) {
 
 // Neuer Kurs bzw. neue Serie: berechnet alle Termine aus Typ und Eingabe.
 // body.pros (optional) wählt pro Termin einen eigenen Pro, sonst gilt body.pro_id.
-// opts.blocked (optional): Tage, an denen der Typ nicht stattfindet (siehe seriesDates).
+// opts.blocked (optional): Tage, an denen der Typ nicht stattfindet (siehe seriesDates);
+// opts.bis (optional): wöchentliche Kurse höchstens bis zu diesem Datum.
 function planNew(type, body, opts = {}) {
   const date = isoDate(body.date);
   if (type.first_weekday !== null && weekdayOf(date) !== type.first_weekday) {
     throw new ValidationError(`«${type.name}» beginnt immer an einem ${WEEKDAYS[type.first_weekday]}.`);
   }
-  const offsets = type.series_offsets;
-  const dates = seriesDates(type, date, opts.blocked);
+  const dates = seriesDates(type, date, opts.blocked, 0, opts.bis);
   const pros = Array.isArray(body.pros) ? body.pros : [];
   const fallback = empty(body.pro_id) ? null : body.pro_id;
-  const seriesId = offsets.length > 1 ? crypto.randomUUID() : null;
+  const seriesId = dates.length > 1 ? crypto.randomUUID() : null;
   const notiz = String(body.notiz || "").trim().slice(0, 500);
 
   assertWindow(type, dates);
-  return offsets.map((offset, i) => ({
+  return dates.map((_, i) => ({
     type_id: type.id,
-    pro_id: id(empty(pros[i]) ? fallback : pros[i], offsets.length > 1 ? `Pro für Termin ${i + 1}` : "Pro"),
+    pro_id: id(empty(pros[i]) ? fallback : pros[i], dates.length > 1 ? `Pro für Termin ${i + 1}` : "Pro"),
     date: dates[i],
     ...times(type, body, i),
     notiz,
@@ -335,7 +372,7 @@ function planUpdate(existing, type, body, opts = {}) {
     const date = empty(body.date) ? existing.date : isoDate(body.date);
     return { ...existing, pro_id: id(body.pro_id, "Pro"), date, notiz };
   }
-  if (type.series_offsets.length > 1) {
+  if (isSeries(type)) {
     throw new ValidationError("Ein Serien-Typ kann nur neu angelegt werden, nicht aus einem bestehenden Kurs.");
   }
   const date = isoDate(body.date);
@@ -350,5 +387,5 @@ function planUpdate(existing, type, body, opts = {}) {
 
 module.exports = {
   SEED_TYPES, SEED_SERIES_TYPES, TYPE_COLUMNS, WEEKDAYS, AREAS, ValidationError,
-  normalizeType, typeValues, minutes, planNew, planUpdate, seriesDates, movedSeriesDates, id, addDays, weekdayOf, assertWindow, validDate, SYNC_FIXED_EVENTS_SQL,
+  normalizeType, typeValues, minutes, planNew, planUpdate, seriesDates, movedSeriesDates, isWeekly, isSeries, weeklyCap, id, addDays, weekdayOf, assertWindow, validDate, SYNC_FIXED_EVENTS_SQL,
 };

@@ -17,8 +17,20 @@
     return data.types.find((t) => t.id === ev.type_id);
   }
 
+  // Wöchentlich: regelmässiger Kurs bis zum Ende des einplanbaren Zeitraums (wie server/events.js)
+  function isWeekly(t) {
+    return t?.wiederholung === "woechentlich";
+  }
+
+  function weeklyCap(t) {
+    if (!t.max_stunden) return Infinity;
+    const per = t.calc === "pauschal" ? t.brutto_fix_min
+      : t.fixed_start_min !== null ? ((t.fixed_end_min - t.fixed_start_min) * t.brutto_min) / 30 : 0;
+    return per > 0 ? Math.max(1, Math.floor((t.max_stunden * 60 + 0.01) / per)) : Infinity;
+  }
+
   function isSeriesType(t) {
-    return !!t && t.series_offsets.length > 1;
+    return !!t && (isWeekly(t) || t.series_offsets.length > 1);
   }
 
   // Brutto bzw. Netto in Minuten:
@@ -62,6 +74,13 @@
   }
 
   function seriesDates(t, first) {
+    if (isWeekly(t)) {
+      const end = D.parseDate(t.einplanbar_bis || `${first.getFullYear()}-12-31`);
+      const cap = weeklyCap(t);
+      const dates = [];
+      for (let d = first; d <= end && dates.length < cap; d = D.addDays(d, 7)) if (!holidayBlocked(t, d)) dates.push(d);
+      return dates;
+    }
     if (!data.holidayTypes?.has(t.id)) return t.series_offsets.map((o) => D.addDays(first, o));
     const dates = [first];
     for (let i = 1; i < t.series_offsets.length; i++) {
@@ -82,7 +101,7 @@
   function eventName(ev) {
     const name = typeOf(ev)?.name || "Kurs";
     const t = typeOf(ev);
-    return ev.series_id && t ? `${name} · ${ev.series_index}/${t.series_offsets.length}` : name;
+    return ev.series_id && t ? `${name} · ${ev.series_index}/${isWeekly(t) ? seriesOf(ev).length : t.series_offsets.length}` : name;
   }
 
   // Geplante Stunden je Pro (Minuten brutto/netto) aus allen geladenen Kursen
@@ -159,6 +178,7 @@
 
   // "Sa, So, Sa, So" aus Wochentag des ersten Termins und Abständen
   function patternText(t) {
+    if (isWeekly(t)) return `jede Woche ${D.WEEKDAYS[t.first_weekday]}`;
     if (t.first_weekday === null) return `${t.series_offsets.length} Termine`;
     return t.series_offsets.map((o) => D.WEEKDAYS[(t.first_weekday + o) % 7]).join(", ");
   }
@@ -192,7 +212,8 @@
     const rows = $("#event-series-rows");
     rows.replaceChildren();
     const dates = [];
-    t.series_offsets.forEach((_, i) => {
+    const count = isWeekly(t) ? allDates.length : t.series_offsets.length;
+    Array.from({ length: count }, (_, i) => i).forEach((i) => {
       const date = allDates[i] || null;
       const time = t.series_times ? ` ${clock(t.series_times[i][0])}` : "";
       dates.push(date ? `${shortDate(date)}${time}` : "–");
@@ -205,7 +226,7 @@
       row.append(select);
       rows.append(row);
     });
-    $("#event-series-summary").textContent = `${t.series_offsets.length} Termine: ${dates.join(" · ")}`;
+    $("#event-series-summary").textContent = `${count} Termine${isWeekly(t) ? " (wöchentlich bis Ende Zeitraum)" : ""}: ${dates.join(" · ")}`;
   }
 
   function updatePreview() {
@@ -228,7 +249,8 @@
     );
     if (lesson < end) box.append(el("span", "", `Puffer ${clock(lesson)}–${clock(end)}`));
     if (isSeriesType(t) && !editingEvent) {
-      box.append(el("span", "", `Total ${formatHM(minutesOf(ev, "brutto") * t.series_offsets.length)} brutto`));
+      const count = isWeekly(t) ? (f.date.value ? seriesDates(t, D.parseDate(f.date.value)).length : 0) : t.series_offsets.length;
+      box.append(el("span", "", `${count} Termine · Total ${formatHM(minutesOf(ev, "brutto") * count)} brutto`));
     }
   }
 
@@ -393,7 +415,7 @@
     const f = form.elements;
     // Serien-Typen lassen sich nur neu anlegen, nicht aus einem einzelnen Kurs
     const types = event && !series ? data.types.filter((x) => !isSeriesType(x)) : data.types;
-    fillSelect(f.type_id, types, (x) => (isSeriesType(x) ? `${x.name} (${x.series_offsets.length} Termine)` : x.name));
+    fillSelect(f.type_id, types, (x) => (isWeekly(x) ? `${x.name} (wöchentlich)` : isSeriesType(x) ? `${x.name} (${x.series_offsets.length} Termine)` : x.name));
     fillSelect(f.pro_id, data.pros, (p) => p.name);
     const v = event || prefill;
     // Neuer Kurs für einen bestimmten Pro: ersten Typ wählen, den dieser Pro übernehmen darf
@@ -466,7 +488,18 @@
     $("#type-pauschal").hidden = !pauschal;
     const offsets = parseOffsets(f.series_offsets.value);
     const weekday = f.first_weekday.value === "" ? null : Number(f.first_weekday.value);
-    $("#type-times-row").hidden = !(offsets && offsets.length > 1) && !f.series_times.value;
+    const weekly = f.wiederholung.value === "woechentlich";
+    $("#type-offsets-wrap").hidden = weekly;
+    $("#type-weekday-label").textContent = weekly ? "Wochentag" : "Erster Termin nur am";
+    $("#type-times-row").hidden = weekly || (!(offsets && offsets.length > 1) && !f.series_times.value);
+    if (weekly) {
+      const day = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : null);
+      const until = day(f.einplanbar_bis.value) || "Jahresende";
+      $("#type-pattern").textContent = weekday === null
+        ? "Bitte den Wochentag wählen."
+        : `→ jeden ${D.WEEKDAYS_LONG?.[weekday] || WEEKDAYS[weekday]} ab dem gewählten Start bis ${until}${f.max_stunden.value ? `, höchstens so viele Termine, wie die Max. Sollstunden erlauben` : ""}. Wochen, die eine Schulferien-Regel sperrt, fallen weg. Beim Auslasten startet der Kurs in der ersten möglichen Woche des Zeitraums (eine Gruppe je Kurstyp).`;
+      return;
+    }
     $("#type-pattern").textContent = offsets
       ? offsets.length > 1
         ? `→ ${offsets.length} Termine${weekday === null ? "" : `: ${offsets.map((o) => D.WEEKDAYS[(weekday + o) % 7]).join(", ")}`}`
@@ -506,6 +539,7 @@
     f.fixed_start.value = type?.fixed_start_min != null ? clock(type.fixed_start_min) : "";
     f.fixed_end.value = type?.fixed_end_min != null ? clock(type.fixed_end_min) : "";
     f.first_weekday.value = type?.first_weekday != null ? String(type.first_weekday) : "";
+    f.wiederholung.value = type?.wiederholung || "";
     f.series_offsets.value = (type?.series_offsets || [0]).join(", ");
     f.series_times.value = type?.series_times ? type.series_times.map(([a, b]) => `${clock(a)}-${clock(b)}`).join(", ") : "";
     renderParallel(type);
@@ -575,6 +609,7 @@
       series_offsets: offsets,
       series_times: f.series_times.value.trim() ? f.series_times.value.split(/\s*[,;]\s*/).filter(Boolean) : null,
       nicht_parallel: parallelIds(),
+      wiederholung: f.wiederholung.value || null,
     };
   }
 
@@ -599,7 +634,7 @@
     code: (t) => t.code,
     name: (t) => t.name,
     time: (t) => t.fixed_start_min,
-    terms: (t) => t.series_offsets.length,
+    terms: (t) => (isWeekly(t) ? 99 : t.series_offsets.length),
     area: (t) => AREAS[t.einsatzbereich]?.label ?? "alle",
   };
 
@@ -647,7 +682,7 @@
         : t.fixed_start_min === null
         ? "frei wählbar"
         : `${clock(t.fixed_start_min)}–${clock(t.fixed_end_min)}${booked > t.fixed_end_min ? `, Puffer bis ${clock(booked)}` : ""}`;
-      const terms = isSeriesType(t) ? `${t.series_offsets.length} (${patternText(t)})` : t.first_weekday !== null ? `1 (${D.WEEKDAYS[t.first_weekday]})` : "1";
+      const terms = isWeekly(t) ? `wöchentlich (${D.WEEKDAYS[t.first_weekday]})` : isSeriesType(t) ? `${t.series_offsets.length} (${patternText(t)})` : t.first_weekday !== null ? `1 (${D.WEEKDAYS[t.first_weekday]})` : "1";
       tr.append(el("td", "tab muted", t.code || "–"), name, el("td", "", AREAS[t.einsatzbereich]?.label ?? "alle"), el("td", "tab muted", windowText(t)), el("td", "muted", hoursText(t)), el("td", "tab", time), el("td", "", terms));
       const actions = el("td");
       if (ctx.isAdmin()) {
@@ -775,7 +810,7 @@
     });
 
     const tf = $("#type-form");
-    ["calc", "series_offsets", "series_times", "first_weekday"].forEach((n) => tf.elements[n].addEventListener("input", updateTypeForm));
+    ["calc", "series_offsets", "series_times", "first_weekday", "wiederholung", "einplanbar_bis", "max_stunden"].forEach((n) => tf.elements[n].addEventListener("input", updateTypeForm));
     tf.addEventListener("submit", async (e) => {
       e.preventDefault();
       try {

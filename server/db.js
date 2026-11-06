@@ -65,7 +65,8 @@ async function migrate() {
       ADD COLUMN IF NOT EXISTS freie_tage              TEXT[] NOT NULL DEFAULT '{}',
       ADD COLUMN IF NOT EXISTS auslastung_soll_prozent INTEGER NOT NULL DEFAULT 100,
       ADD COLUMN IF NOT EXISTS abwesenheiten           JSONB NOT NULL DEFAULT '[]',
-      ADD COLUMN IF NOT EXISTS verfuegbarkeitsregel    TEXT;
+      ADD COLUMN IF NOT EXISTS verfuegbarkeitsregel    TEXT,
+      ADD COLUMN IF NOT EXISTS wechsel                 JSONB;
   `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS event_types (
@@ -120,7 +121,8 @@ async function migrate() {
       ADD COLUMN IF NOT EXISTS series_offsets  INTEGER[] NOT NULL DEFAULT '{0}',
       ADD COLUMN IF NOT EXISTS series_times    JSONB,
       ADD COLUMN IF NOT EXISTS code            TEXT,
-      ADD COLUMN IF NOT EXISTS nicht_parallel  INTEGER[] NOT NULL DEFAULT '{}';
+      ADD COLUMN IF NOT EXISTS nicht_parallel  INTEGER[] NOT NULL DEFAULT '{}',
+      ADD COLUMN IF NOT EXISTS wiederholung    TEXT;
     CREATE UNIQUE INDEX IF NOT EXISTS event_types_code_idx ON event_types (lower(code)) WHERE code IS NOT NULL;
     ALTER TABLE events
       ADD COLUMN IF NOT EXISTS series_id    TEXT,

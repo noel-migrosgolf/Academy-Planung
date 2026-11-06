@@ -115,7 +115,7 @@
     const count = new Set(list.map((e) => e.series_id || `e${e.id}`)).size;
     const hours = list.reduce((sum, e) => sum + Events.minutesOf(e, "brutto"), 0) / 60;
     const h = (v) => v.toLocaleString("de-CH", { maximumFractionDigits: 1 });
-    const unit = t.series_offsets.length > 1 ? (count === 1 ? "Serie" : "Serien") : count === 1 ? "Termin" : "Termine";
+    const unit = (t.series_offsets.length > 1 || t.wiederholung === "woechentlich") ? (count === 1 ? "Serie" : "Serien") : count === 1 ? "Termin" : "Termine";
     return `${count} ${unit} · ${h(hours)}${t.max_stunden ? ` / max. ${h(t.max_stunden)}` : ""} h`;
   }
 
@@ -135,7 +135,7 @@
       const input = el("input");
       Object.assign(input, { type: "number", min: 1, max: 500, step: 1, value: catchUp.get(t.id) ?? 1, disabled: !catchUp.has(t.id) });
       input.setAttribute("aria-label", `Anzahl ${t.name}`);
-      amount.append(input, el("span", "muted", t.series_offsets.length > 1 ? " Serien" : " Termine"));
+      amount.append(input, el("span", "muted", (t.series_offsets.length > 1 || t.wiederholung === "woechentlich") ? " Serien" : " Termine"));
       box.addEventListener("change", () => {
         box.checked ? catchUp.set(t.id, Math.max(1, Number(input.value) || 1)) : catchUp.delete(t.id);
         input.disabled = !box.checked;
