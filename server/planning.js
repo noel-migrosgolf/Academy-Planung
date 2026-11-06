@@ -63,13 +63,21 @@ async function assertFree(db, planId, ev, ignoreId, label) {
   }
 }
 
+// Meldung für «nicht parallel zu»; r: der bereits geplante Kurs (Typname/-ID, Pro, Zeit)
+function parallelText(type, r, date) {
+  const when = `am ${formatDate(date)} ist ${clock(r.start_min)}–${clock(r.end_min)} bereits «${r.name}» (${r.pro}) geplant`;
+  return r.type_id === type.id
+    ? `Zwei «${type.name}» dürfen nicht gleichzeitig stattfinden: ${when}.`
+    : `«${type.name}» darf nicht parallel zu «${r.name}» stattfinden: ${when}.`;
+}
+
 // Kurstypen, die nicht parallel stattfinden dürfen: Überschneidet sich ein Termin (belegte Zeit inkl. Puffer)
 // im selben Plan mit einem Kurs eines dieser Typen – egal bei welchem Pro –, wird er abgelehnt.
 async function assertNotParallel(db, planId, type, events, label = "") {
   if (!type.nicht_parallel?.length) return;
   for (const ev of events) {
     const { rows } = await db.query(
-      `SELECT t.name, p.name AS pro, e.start_min, e.end_min
+      `SELECT t.name, e.type_id, p.name AS pro, e.start_min, e.end_min
          FROM events e JOIN event_types t ON t.id = e.type_id JOIN pros p ON p.id = e.pro_id
         WHERE e.plan_id = $1 AND e.date = $2 AND e.start_min < $4 AND e.end_min > $3
           AND e.type_id = ANY($5::int[]) AND e.id <> $6
@@ -78,27 +86,27 @@ async function assertNotParallel(db, planId, type, events, label = "") {
     );
     if (rows[0]) {
       const r = rows[0];
-      const err = new eventsData.ValidationError(
-        `${label}«${type.name}» darf nicht parallel zu «${r.name}» stattfinden: am ${formatDate(ev.date)} ist ${clock(r.start_min)}–${clock(r.end_min)} bereits «${r.name}» (${r.pro}) geplant.`
-      );
+      const err = new eventsData.ValidationError(`${label}${parallelText(type, r, ev.date)}`);
       err.status = 409;
       throw err;
     }
   }
 }
 
-// Speichert «nicht parallel zu» für einen Kurstyp und trägt es bei den Partnern gegenseitig ein.
+// Speichert «nicht parallel zu» für einen Kurstyp und trägt es bei den Partnern gegenseitig ein
+// (selbst = der Typ steht in der eigenen Liste: keine zwei Kurse dieses Typs gleichzeitig).
 // Liefert einen Hinweis, falls bereits geplante Kurse dagegen verstossen (sie bleiben bestehen).
-async function syncNotParallel(db, typeId, list) {
-  const { rows } = await db.query("SELECT id FROM event_types WHERE id = ANY($1::int[]) AND id <> $2 ORDER BY id", [list, typeId]);
-  const ids = rows.map((r) => r.id);
-  await db.query("UPDATE event_types SET nicht_parallel = $1 WHERE id = $2", [ids, typeId]);
+async function syncNotParallel(db, typeId, list, selbst = false) {
+  const wanted = selbst ? [...list, typeId] : list;
+  const { rows: found } = await db.query("SELECT id FROM event_types WHERE id = ANY($1::int[]) ORDER BY id", [wanted]);
+  await db.query("UPDATE event_types SET nicht_parallel = $1 WHERE id = $2", [found.map((r) => r.id), typeId]);
+  const ids = found.map((r) => r.id).filter((id) => id !== typeId); // Partner
   await db.query(
     "UPDATE event_types SET nicht_parallel = array_append(nicht_parallel, $1::int) WHERE id = ANY($2::int[]) AND NOT ($1::int = ANY(nicht_parallel))",
     [typeId, ids]
   );
   await db.query(
-    "UPDATE event_types SET nicht_parallel = array_remove(nicht_parallel, $1::int) WHERE id <> ALL($2::int[]) AND $1::int = ANY(nicht_parallel)",
+    "UPDATE event_types SET nicht_parallel = array_remove(nicht_parallel, $1::int) WHERE id <> $1 AND id <> ALL($2::int[]) AND $1::int = ANY(nicht_parallel)",
     [typeId, ids]
   );
   const { rows: clashes } = await db.query(
@@ -106,11 +114,12 @@ async function syncNotParallel(db, typeId, list) {
        FROM events a
        JOIN events b ON b.plan_id = a.plan_id AND b.date = a.date AND b.id <> a.id
                     AND a.start_min < b.end_min AND b.start_min < a.end_min AND b.type_id = ANY($2::int[])
+                    AND (b.type_id <> a.type_id OR b.id > a.id)
        JOIN event_types tb ON tb.id = b.type_id
        JOIN plans pl ON pl.id = a.plan_id
       WHERE a.type_id = $1
       ORDER BY a.date LIMIT 3`,
-    [typeId, ids]
+    [typeId, found.map((r) => r.id)]
   );
   if (!clashes.length) return null;
   const list3 = clashes.map((c) => `mit «${c.name}» am ${c.datum} (Plan «${c.plan}»)`).join(", ");
@@ -498,7 +507,7 @@ const WEEKDAY_INDEX = Object.fromEntries(eventsData.WEEKDAYS.map((d, i) => [d.to
 async function loadRules(db, planId, { activeOnly = true } = {}) {
   const { rows } = await db.query(
     `SELECT r.id, r.plan_id, r.art, r.type_id, r.type_ids, to_char(r.von, 'YYYY-MM-DD') AS von, to_char(r.bis, 'YYYY-MM-DD') AS bis,
-            r.operator, r.stunden, r.prozent, r.wochentage, r.modus, r.aktiv, r.notiz
+            r.operator, r.stunden, r.prozent, r.wochentage, r.modus, r.zeit_von, r.zeit_bis, r.aktiv, r.notiz
        FROM rules r WHERE r.plan_id = $1 ${activeOnly ? "AND r.aktiv" : ""} ORDER BY r.art, r.von, r.id`,
     [planId]
   );
@@ -571,15 +580,20 @@ async function shareOf(db, rule, typeById) {
     "SELECT type_id, to_char(date, 'YYYY-MM-DD') AS date, start_min, end_min FROM events WHERE plan_id = $2 AND type_id = ANY($1::int[])",
     [rule.type_ids, rule.plan_id]
   );
-  const days = new Set(rule.wochentage);
   let on = 0;
   let total = 0;
   for (const ev of rows) {
-    const minutes = minutesOf(ev, typeById.get(ev.type_id), "brutto");
+    const type = typeById.get(ev.type_id);
+    const minutes = minutesOf(ev, type, "brutto");
     total += minutes;
-    if (days.has(eventsData.weekdayOf(ev.date))) on += minutes;
+    if (shareHits(rule, ev, type)) on += minutes;
   }
   return shareResult(rule, on, total);
+}
+
+// Zählt der Termin für die Anteil-Regel (Wochentag, Zeitfenster)? Siehe rules.shareHit
+function shareHits(rule, ev, type) {
+  return rulesData.shareHit(rule, ev, eventsData.weekdayOf(ev.date), minutesOf(ev, type, "netto"));
 }
 
 // «R3» oder 3 → 3
@@ -625,14 +639,14 @@ async function diagnoseRule(planId, value, db = pool) {
   }
 
   if (rule.art === "wochentage") {
-    const days = new Set(rule.wochentage);
+    const days = new Set(rule.wochentage.length ? rule.wochentage : [0, 1, 2, 3, 4, 5, 6]);
     let on = 0;
     let total = 0;
     for (const tid of rule.type_ids) {
       const type = typeById.get(tid);
       if (!type) continue;
       const list = events.filter((ev) => ev.type_id === tid);
-      const tOn = list.filter((ev) => days.has(eventsData.weekdayOf(ev.date))).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
+      const tOn = list.filter((ev) => shareHits(rule, ev, type)).reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
       const tTotal = list.reduce((s, ev) => s + minutesOf(ev, type, "brutto"), 0);
       on += tOn;
       total += tTotal;
@@ -640,7 +654,8 @@ async function diagnoseRule(planId, value, db = pool) {
       const fixedDays = type.first_weekday === null ? null : type.series_offsets.map((o) => (type.first_weekday + o) % 7);
       const never = fixedDays && fixedDays.every((d) => !days.has(d));
       const always = fixedDays && fixedDays.every((d) => days.has(d));
-      lines.push(`${type.code || type.name}: ${h(tOn)} von ${h(tTotal)} an den gewählten Tagen${never ? " – findet nie an diesen Tagen statt (zählt nur dagegen)" : always ? " – findet immer an diesen Tagen statt" : ""}`);
+      const where = rule.zeit_von === null ? "an den gewählten Tagen" : rule.wochentage.length ? "an den gewählten Tagen im Zeitfenster" : "im Zeitfenster";
+      lines.push(`${type.code || type.name}: ${h(tOn)} von ${h(tTotal)} ${where}${never ? " – findet nie an diesen Tagen statt (zählt nur dagegen)" : always && rule.zeit_von === null ? " – findet immer an diesen Tagen statt" : ""}`);
     }
     const share = shareResult(rule, on, total);
     if (share.ist_prozent === null) {
@@ -652,7 +667,9 @@ async function diagnoseRule(planId, value, db = pool) {
       const addOn = p < 1 ? (p * total - on) / (1 - p) : Infinity;
       const removeOff = total - on / p; // so viel an anderen Tagen weniger, damit on / total = p
       lines.push(`Stand: ${share.ist_prozent} % (mind. ${rule.prozent} %) – nicht erfüllt.`);
-      lines.push(`Lösung: ${Number.isFinite(addOn) ? `zusätzlich ${h(addOn)} an den gewählten Tagen einplanen oder ` : ""}${h(Math.max(0, removeOff))} an anderen Tagen streichen bzw. verschieben.`);
+      const inside = rule.zeit_von !== null ? (rule.wochentage.length ? "an den gewählten Tagen im Zeitfenster" : "im Zeitfenster") : "an den gewählten Tagen";
+      const outside = rule.zeit_von !== null ? "ausserhalb" : "an anderen Tagen";
+      lines.push(`Lösung: ${Number.isFinite(addOn) ? `zusätzlich ${h(addOn)} ${inside} einplanen oder ` : ""}${h(Math.max(0, removeOff))} ${outside} streichen bzw. verschieben.`);
     }
     return lines;
   }
@@ -848,17 +865,21 @@ async function planChange(db, planId, existing, type, body) {
   if (timed.length && type.nicht_parallel?.length) {
     for (const { after: a } of timed) {
       const { rows } = await db.query(
-        `SELECT t.name, p.name AS pro, e.start_min, e.end_min
+        `SELECT t.name, e.type_id, p.name AS pro, e.start_min, e.end_min
            FROM events e JOIN event_types t ON t.id = e.type_id JOIN pros p ON p.id = e.pro_id
           WHERE e.plan_id = $1 AND e.date = $2 AND e.start_min < $4 AND e.end_min > $3
             AND e.type_id = ANY($5::int[]) AND e.id <> ALL($6::int[])
           ORDER BY e.start_min LIMIT 1`,
         [planId, a.date, a.start_min, a.end_min, type.nicht_parallel, ids]
       );
-      if (rows[0]) {
-        const r = rows[0];
-        add(konflikte, a, `darf nicht parallel zu «${r.name}» stattfinden: am ${formatDate(a.date)} ist ${clock(r.start_min)}–${clock(r.end_min)} bereits «${r.name}» (${r.pro}) geplant.`);
-      }
+      if (rows[0]) add(konflikte, a, parallelText(type, rows[0], a.date));
+    }
+    // Typ selbst in der Liste: geänderte Termine desselben Typs dürfen sich auch untereinander nicht überschneiden
+    if (type.nicht_parallel.includes(type.id)) {
+      timed.forEach(({ after: a }, i) => {
+        const other = timed.slice(0, i).find(({ after: b }) => b.date === a.date && b.start_min < a.end_min && a.start_min < b.end_min);
+        if (other) add(konflikte, a, `Zwei «${type.name}» dürfen nicht gleichzeitig stattfinden: überschneidet sich am ${formatDate(a.date)} mit Termin ${other.after.series_index ?? ""}.`);
+      });
     }
   }
   if (timed.length) {
@@ -986,15 +1007,16 @@ async function autoFill(
     const blockers = new Map(lk.types.map((t) => [t.id, blockerOf(allRules, t.id)]));
     const planOpts = (t) => (blockers.get(t.id) ? { blocked: blockers.get(t.id) } : {});
     const shareRules = allRules.filter((r) => r.art === "wochentage")
-      .map((r) => ({ ...r, ids: new Set(r.type_ids), days: new Set(r.wochentage), on: 0, total: 0 }));
+      .map((r) => ({ ...r, ids: new Set(r.type_ids), on: 0, total: 0 }));
     const shareAdd = (rule, list) => {
       let on = 0;
       let total = 0;
       for (const ev of list) {
         if (!rule.ids.has(ev.type_id)) continue;
-        const minutes = minutesOf(ev, typeById.get(ev.type_id), "brutto");
+        const type = typeById.get(ev.type_id);
+        const minutes = minutesOf(ev, type, "brutto");
         total += minutes;
-        if (rule.days.has(eventsData.weekdayOf(ev.date))) on += minutes;
+        if (shareHits(rule, ev, type)) on += minutes;
       }
       return { on, total };
     };

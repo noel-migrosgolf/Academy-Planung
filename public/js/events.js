@@ -518,6 +518,14 @@
     const chosen = new Set(type?.nicht_parallel || []);
     const list = $("#type-parallel-list");
     list.replaceChildren();
+    // Der Kurstyp selbst: keine zwei Kurse dieses Typs gleichzeitig (neuer Typ: «selbst», ID gibt es noch nicht)
+    const self = el("label");
+    const selfBox = el("input");
+    Object.assign(selfBox, { type: "checkbox", value: type ? String(type.id) : "selbst", checked: !!type && chosen.has(type.id) });
+    selfBox.dataset.self = "1";
+    selfBox.addEventListener("change", updateParallelSummary);
+    self.append(selfBox, el("b", "", "Dieser Kurstyp selbst"), el("span", "muted", " – keine zwei gleichzeitig"));
+    list.append(self);
     for (const t of sortedTypes().filter((x) => x.id !== type?.id)) {
       const row = el("label");
       const box = el("input");
@@ -533,12 +541,14 @@
   }
 
   function parallelIds() {
-    return [...document.querySelectorAll("#type-parallel-list input:checked")].map((b) => Number(b.value));
+    return [...document.querySelectorAll("#type-parallel-list input:checked")].map((b) => (b.value === "selbst" ? "selbst" : Number(b.value)));
   }
 
   function updateParallelSummary() {
-    const names = parallelIds().map((id) => data.types.find((t) => t.id === id)).map((t) => t.code || t.name);
-    $("#type-parallel-sum").textContent = names.length ? names.join(", ") : "keinem anderen Kurstyp";
+    const names = [...document.querySelectorAll("#type-parallel-list input:checked")]
+      .map((b) => (b.dataset.self ? "sich selbst" : data.types.find((t) => t.id === Number(b.value))))
+      .map((t) => (typeof t === "string" ? t : t.code || t.name));
+    $("#type-parallel-sum").textContent = names.length ? names.join(", ") : "keinem Kurstyp";
   }
 
   function readTypeForm() {
@@ -630,7 +640,7 @@
       dot.style.background = t.color;
       name.append(dot, document.createTextNode(t.name));
       const avoid = (t.nicht_parallel || []).map((id) => data.types.find((x) => x.id === id)).filter(Boolean);
-      if (avoid.length) name.append(el("span", "type-sub", `nicht parallel zu ${avoid.map((x) => x.code || x.name).join(", ")}`));
+      if (avoid.length) name.append(el("span", "type-sub", `nicht parallel zu ${avoid.map((x) => (x.id === t.id ? "sich selbst" : x.code || x.name)).join(", ")}`));
       const booked = t.fixed_start_min !== null ? bookedEnd(t, t.fixed_start_min, t.fixed_end_min) : null;
       const time = t.series_times
         ? `je Termin ${timesText(t)}`

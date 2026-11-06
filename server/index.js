@@ -211,7 +211,7 @@ api.post("/event-types", auth.requireDataAdmin, (req, res) =>
          RETURNING id`,
         eventsData.typeValues(t)
       );
-      await planning.syncNotParallel(db, rows[0].id, t.nicht_parallel);
+      await planning.syncNotParallel(db, rows[0].id, t.nicht_parallel, t.nicht_parallel_selbst);
       const result = await db.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [rows[0].id]);
       await db.query("COMMIT");
       return result;
@@ -264,7 +264,7 @@ api.put("/event-types/:id", auth.requireDataAdmin, (req, res) =>
             `Die neue Zeit würde bestehende Termine überschneiden: ${list}${clashes.length === 4 ? " …" : ""}. Bitte zuerst diese Termine verschieben.`
           );
         }
-        result.warnung = await planning.syncNotParallel(db, typeId, t.nicht_parallel);
+        result.warnung = await planning.syncNotParallel(db, typeId, t.nicht_parallel, t.nicht_parallel_selbst);
         result.rows = (await db.query(`SELECT ${TYPE_FIELDS} FROM event_types WHERE id = $1`, [typeId])).rows;
       }
       await db.query("COMMIT");

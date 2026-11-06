@@ -399,7 +399,7 @@
             <span class="spacer"></span>
             <div class="seg" role="tablist" aria-label="Regelart" id="rule-kind">
               <button type="button" data-art="stunden" class="on">Stunden im Zeitraum</button>
-              <button type="button" data-art="wochentage">Anteil nach Wochentag</button>
+              <button type="button" data-art="wochentage">Anteil nach Tag &amp; Zeit</button>
               <button type="button" data-art="ferien">Schulferien</button>
             </div>
           </div>
@@ -439,7 +439,12 @@
                 <button type="button" class="chip" data-day="5">Sa</button>
                 <button type="button" class="chip" data-day="6">So</button>
               </div>
+              <span>zwischen</span>
+              <input type="time" name="zeit_von" step="300" class="rule-time" aria-label="Zeitfenster von">
+              <span>und</span>
+              <input type="time" name="zeit_bis" step="300" class="rule-time" aria-label="Zeitfenster bis">
               <span>stattfinden.</span>
+              <p class="note">Zeitfenster optional (leer = ganzer Tag); ohne Wochentag gilt es an jedem Tag. Ein Termin zählt, wenn der Unterricht (Beginn bis Unterrichtsende, ohne Puffer) ganz im Fenster liegt.</p>
             </div>
             <div class="rule-sentence rule-share" id="rule-s-ferien" hidden>
               <div class="chips rule-type-chips"></div>
@@ -717,10 +722,10 @@
         <div class="field">
           <span class="field-label">Darf nicht parallel stattfinden zu</span>
           <details class="multi-dd" id="type-parallel">
-            <summary id="type-parallel-sum">keinem anderen Kurstyp</summary>
+            <summary id="type-parallel-sum">keinem Kurstyp</summary>
             <div class="multi-dd-list" id="type-parallel-list"></div>
           </details>
-          <p class="note">Termine dieser Kurstypen dürfen sich im selben Plan zeitlich nicht überschneiden (inkl. Puffer), auch nicht bei verschiedenen Pros. Gilt gegenseitig.</p>
+          <p class="note">Termine dieser Kurstypen dürfen sich im selben Plan zeitlich nicht überschneiden (inkl. Puffer), auch nicht bei verschiedenen Pros. Gilt gegenseitig. «Dieser Kurstyp selbst»: es finden nie zwei Kurse dieses Typs gleichzeitig statt.</p>
         </div>
         <label>Stunden-Berechnung
           <select name="calc" class="fsel">

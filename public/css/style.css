@@ -511,6 +511,7 @@ fieldset > .btn { align-self: flex-start; }
 .rule-sentence { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: 14px; }
 .rule-sentence input[type="date"] { width: 150px; }
 .rule-sentence .rule-num { width: 90px; }
+.rule-sentence .rule-time { width: 120px; }
 .rule-sentence select { height: 34px; }
 .rule-form .actions { margin-top: 12px; }
 .chip.sel { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }

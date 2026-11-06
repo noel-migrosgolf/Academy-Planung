@@ -168,6 +168,8 @@ async function migrate() {
       ADD COLUMN IF NOT EXISTS prozent    REAL,
       ADD COLUMN IF NOT EXISTS wochentage INTEGER[],
       ADD COLUMN IF NOT EXISTS modus      TEXT,
+      ADD COLUMN IF NOT EXISTS zeit_von   INTEGER,
+      ADD COLUMN IF NOT EXISTS zeit_bis   INTEGER,
       ALTER COLUMN type_id  DROP NOT NULL,
       ALTER COLUMN von      DROP NOT NULL,
       ALTER COLUMN bis      DROP NOT NULL,

@@ -1,6 +1,6 @@
 // Regeln (Reiter «Regeln»), zwei Arten:
 //   stunden    – «Zwischen Datum x und y müssen <Vergleich> z Sollstunden von Kurs k stattfinden.»
-//   wochentage – «Mindestens x % der Sollstunden von Kursen … müssen an Tagen … stattfinden.»
+//   wochentage – «Mindestens x % der Sollstunden von Kursen … müssen an Tagen … [zwischen hh:mm und hh:mm] stattfinden.»
 //   ferien     – «Kurse … finden nur ausserhalb der bzw. nur in den Schulferien des Kantons Zug statt.»
 // Regeln gehören zum aktuellen Plan; anlegen, bearbeiten, (de)aktivieren und löschen darf, wer den Plan bearbeiten darf.
 (function () {
@@ -15,6 +15,7 @@
   const selTypes = new Set();
   const selDays = new Set();
 
+  const clock = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
   const hours = (v) => `${Number(v).toLocaleString("de-CH", { maximumFractionDigits: 1 })} h`;
   const percent = (v) => `${Number(v).toLocaleString("de-CH", { maximumFractionDigits: 1 })} %`;
 
@@ -121,7 +122,8 @@
   function bodyOf(r) {
     return {
       art: r.art, type_id: r.type_id, type_ids: r.type_ids, von: r.von, bis: r.bis, operator: r.operator,
-      stunden: r.stunden, prozent: r.prozent, wochentage: r.wochentage, aktiv: r.aktiv, notiz: r.notiz,
+      stunden: r.stunden, prozent: r.prozent, wochentage: r.wochentage, modus: r.modus, zeit_von: r.zeit_von, zeit_bis: r.zeit_bis,
+      aktiv: r.aktiv, notiz: r.notiz,
     };
   }
 
@@ -181,6 +183,8 @@
       r.type_ids.forEach((id) => selTypes.add(id));
       selDays.clear();
       r.wochentage.forEach((d) => selDays.add(d));
+      f.zeit_von.value = r.zeit_von !== null && r.zeit_von !== undefined ? clock(r.zeit_von) : "";
+      f.zeit_bis.value = r.zeit_bis !== null && r.zeit_bis !== undefined ? clock(r.zeit_bis) : "";
       renderTypeChips();
       renderDayChips();
     } else {
@@ -203,6 +207,8 @@
     f.stunden.value = "";
     f.prozent.value = "";
     f.modus.value = "ausserhalb";
+    f.zeit_von.value = "";
+    f.zeit_bis.value = "";
     selTypes.clear();
     selDays.clear();
     renderTypeChips();
@@ -223,6 +229,8 @@
         prozent: f.prozent.value === "" ? null : Number(f.prozent.value),
         type_ids: [...selTypes],
         wochentage: [...selDays].sort(),
+        zeit_von: f.zeit_von.value || null,
+        zeit_bis: f.zeit_bis.value || null,
       };
     }
     return {

@@ -93,8 +93,8 @@ router.post("/", async (req, res) => {
         [planId, copyFrom, req.session.id ?? null]
       );
       await db.query(
-        `INSERT INTO rules (plan_id, art, type_id, type_ids, von, bis, operator, stunden, prozent, wochentage, modus, aktiv, notiz)
-         SELECT $1, art, type_id, type_ids, von, bis, operator, stunden, prozent, wochentage, modus, aktiv, notiz
+        `INSERT INTO rules (plan_id, art, type_id, type_ids, von, bis, operator, stunden, prozent, wochentage, modus, zeit_von, zeit_bis, aktiv, notiz)
+         SELECT $1, art, type_id, type_ids, von, bis, operator, stunden, prozent, wochentage, modus, zeit_von, zeit_bis, aktiv, notiz
            FROM rules WHERE plan_id = $2`,
         [planId, copyFrom]
       );

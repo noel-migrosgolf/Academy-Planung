@@ -147,9 +147,12 @@ function normalizeType(body) {
     }
   }
 
-  // Kurstypen, mit denen sich dieser zeitlich nicht überschneiden darf (gegenseitig, in jedem Plan)
+  // Kurstypen, mit denen sich dieser zeitlich nicht überschneiden darf (gegenseitig, in jedem Plan).
+  // Der Typ selbst darf dabei sein (keine zwei Kurse dieses Typs gleichzeitig); «selbst» steht für die
+  // eigene ID, die ein neuer Typ erst beim Speichern bekommt.
   const others = Array.isArray(body.nicht_parallel) ? body.nicht_parallel : [];
-  t.nicht_parallel = [...new Set(others.map((v) => id(v, "Nicht parallel zu")))].sort((a, b) => a - b);
+  t.nicht_parallel_selbst = others.includes("selbst");
+  t.nicht_parallel = [...new Set(others.filter((v) => v !== "selbst").map((v) => id(v, "Nicht parallel zu")))].sort((a, b) => a - b);
   return t;
 }
 
@@ -347,5 +350,5 @@ function planUpdate(existing, type, body, opts = {}) {
 
 module.exports = {
   SEED_TYPES, SEED_SERIES_TYPES, TYPE_COLUMNS, WEEKDAYS, AREAS, ValidationError,
-  normalizeType, typeValues, planNew, planUpdate, seriesDates, movedSeriesDates, id, addDays, weekdayOf, assertWindow, validDate, SYNC_FIXED_EVENTS_SQL,
+  normalizeType, typeValues, minutes, planNew, planUpdate, seriesDates, movedSeriesDates, id, addDays, weekdayOf, assertWindow, validDate, SYNC_FIXED_EVENTS_SQL,
 };
