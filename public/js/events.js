@@ -697,10 +697,98 @@
     $("#type-empty").hidden = data.types.length > 0;
   }
 
+  // --- Kursanzahl je Kurstyp (Reiter «Geplante Kurse») ---
+
+  let listFilter = null; // Typ-ID, nach der die Liste «Alle Kurse» gefiltert ist
+
+  // Überschneidungen je Termin: gleicher Kurstyp bzw. verbotener Partner («nicht parallel zu», inkl. selbst)
+  function overlapsByEvent(events) {
+    const byDate = new Map();
+    for (const ev of events) (byDate.get(ev.date) || byDate.set(ev.date, []).get(ev.date)).push(ev);
+    const same = new Set();
+    const forbidden = new Set();
+    for (const list of byDate.values()) {
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const a = list[i];
+          const b = list[j];
+          if (!(a.start_min < b.end_min && b.start_min < a.end_min)) continue;
+          if (a.type_id === b.type_id) {
+            same.add(a.id);
+            same.add(b.id);
+          }
+          if (typeOf(a)?.nicht_parallel?.includes(b.type_id) || typeOf(b)?.nicht_parallel?.includes(a.type_id)) {
+            forbidden.add(a.id);
+            forbidden.add(b.id);
+          }
+        }
+      }
+    }
+    return { same, forbidden };
+  }
+
+  function renderCounts() {
+    const tbody = $("#count-list");
+    tbody.replaceChildren();
+    const events = data.events.filter((e) => e.date >= "2027-01-01" && e.date <= "2027-12-31");
+    const { same, forbidden } = overlapsByEvent(events);
+    let totalCourses = 0;
+    for (const t of sortedTypes()) {
+      const list = events.filter((e) => e.type_id === t.id);
+      if (!list.length) continue;
+      const courses = new Map(); // Serie bzw. Einzeltermin → Pro des ersten Termins
+      for (const e of [...list].sort((a, b) => (a.series_index || 0) - (b.series_index || 0))) {
+        const key = e.series_id || `e${e.id}`;
+        if (!courses.has(key)) courses.set(key, e.pro_id);
+      }
+      totalCourses += courses.size;
+      const perPro = new Map();
+      for (const pid of courses.values()) perPro.set(pid, (perPro.get(pid) || 0) + 1);
+      const brutto = list.reduce((s, e) => s + minutesOf(e, "brutto"), 0);
+      const sameCount = list.filter((e) => same.has(e.id)).length;
+      const badCount = list.filter((e) => forbidden.has(e.id)).length;
+
+      const tr = el("tr", `clickable${listFilter === t.id ? " on" : ""}`);
+      const name = el("td");
+      const dot = el("span", "gdot");
+      dot.style.background = t.color;
+      name.append(dot, document.createTextNode(t.code ? `${t.code} · ${t.name}` : t.name));
+      const parallel = el("td");
+      if (badCount) parallel.append(el("span", "count-bad", `${badCount} Termine verboten gleichzeitig`));
+      if (sameCount && !t.nicht_parallel?.includes(t.id)) {
+        if (badCount) parallel.append(document.createTextNode(" · "));
+        parallel.append(el("span", "muted", `${sameCount} Termine mit gleichem Kurstyp`));
+      }
+      if (!badCount && !(sameCount && !t.nicht_parallel?.includes(t.id))) parallel.append(el("span", "muted", "–"));
+      const pros = [...perPro].sort((a, b) => b[1] - a[1]).map(([pid, n]) => `${proName(pid)} ${n}`).join(", ");
+      tr.append(
+        name,
+        el("td", "num tab", String(courses.size)),
+        el("td", "num tab", String(list.length)),
+        el("td", "num tab", `${formatHM(brutto)}${t.max_stunden ? ` / ${t.max_stunden} h` : ""}`),
+        el("td", "muted", pros),
+        parallel
+      );
+      tr.addEventListener("click", () => {
+        listFilter = listFilter === t.id ? null : t.id;
+        renderCounts();
+        renderEventList();
+      });
+      tbody.append(tr);
+    }
+    $("#count-table").hidden = !tbody.children.length;
+    $("#count-sum").textContent = tbody.children.length ? `${totalCourses} Kurse in ${tbody.children.length} Kurstypen` : "Noch keine Kurse geplant.";
+  }
+
   function renderEventList() {
     const tbody = $("#event-list");
     tbody.replaceChildren();
-    const sorted = [...data.events].sort((a, b) => a.date.localeCompare(b.date) || a.start_min - b.start_min);
+    if (listFilter && !data.types.some((t) => t.id === listFilter)) listFilter = null;
+    const filterType = listFilter && data.types.find((t) => t.id === listFilter);
+    $("#event-filter-clear").hidden = !filterType;
+    if (filterType) $("#event-filter-clear").textContent = `Nur «${filterType.name}» ✕`;
+    const sorted = data.events.filter((e) => !listFilter || e.type_id === listFilter)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.start_min - b.start_min);
     let brutto = 0;
     let netto = 0;
     for (const ev of sorted) {
@@ -737,6 +825,7 @@
   function render() {
     $("#btn-new-type").hidden = !ctx.isAdmin();
     renderTypes();
+    renderCounts();
     renderEventList();
   }
 
@@ -839,6 +928,11 @@
     });
 
     document.querySelectorAll("[data-new-event]").forEach((btn) => btn.addEventListener("click", () => openEvent(null)));
+    $("#event-filter-clear").addEventListener("click", () => {
+      listFilter = null;
+      renderCounts();
+      renderEventList();
+    });
     $("#btn-new-type").addEventListener("click", () => openType(null));
   }
 

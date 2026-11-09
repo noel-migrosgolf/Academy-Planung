@@ -230,6 +230,7 @@ const AUTOFILL_TOOL = {
         description: "Anzahl = Serien bzw. Einzeltermine",
       },
       ziel_ueberschreiten: { type: "boolean", description: "nur bei nachplanen" },
+      gleicher_typ_gleichzeitig: { type: "boolean", description: "mehrere Kurse desselben Typs zur selben Zeit erlauben (Standard false)" },
       nur_pruefen: CHECK,
     },
     required: ["ziel_prozent"],

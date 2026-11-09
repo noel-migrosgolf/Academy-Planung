@@ -231,6 +231,7 @@
     }
     const goals = data.pros.filter((p) => p.sollstunden > 0).map((p) => `${p.name} ${targets.get(p.id) ?? 0} %`);
     line("Ziele", goals.join(", ") || "–");
+    line("Gleicher Kurstyp gleichzeitig", $("#af-once").checked ? "nie (nur eine Gruppe pro Zeit)" : "erlaubt");
   }
 
   function renderTypeResults() {
@@ -351,6 +352,7 @@
       bis: $("#af-to").value || "2027-12-31",
       freie_tage_beachten: $("#af-free").checked,
       regeln_erfuellen: $("#af-rules").checked,
+      gleicher_typ_gleichzeitig: !$("#af-once").checked,
       dry_run: dryRun,
     };
     if (mode === "nachplanen") {
@@ -459,7 +461,7 @@
     $("#af-preview").addEventListener("click", () => run(true));
     $("#af-run").addEventListener("click", () => run(false));
     $("#af-clear").addEventListener("click", clearAll);
-    ["#af-free", "#af-rules", "#af-from", "#af-to", "#af-over"].forEach((s) => $(s).addEventListener("change", () => {
+    ["#af-free", "#af-rules", "#af-once", "#af-from", "#af-to", "#af-over"].forEach((s) => $(s).addEventListener("change", () => {
       invalidate();
       render();
     }));

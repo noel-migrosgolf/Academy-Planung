@@ -715,3 +715,9 @@ fieldset > .btn { align-self: flex-start; }
 .af-summary b { color: var(--ink); }
 @media (max-width: 600px) { .af-steps button { padding-right: 8px; } }
 .af-table input[type=checkbox] { width: auto; height: auto; margin: 0; accent-color: var(--accent); }
+
+/* Kursanzahl je Kurstyp */
+.count-table tr.on td { background: var(--accent-soft); }
+.count-bad { color: var(--crit-ink); font-weight: 600; }
+.count-note { margin: 0; padding: 0 16px 14px; font-size: 12px; color: var(--ink-3); }
+.count-table td:last-child, .count-table th:last-child { text-align: left; }

@@ -239,7 +239,18 @@
         </div>
 
         <div class="card stack">
-          <div class="hd"><h3>Alle Kurse</h3><span class="sub" id="event-sum"></span></div>
+          <div class="hd"><h3>Kursanzahl je Kurstyp 2027</h3><span class="sub" id="count-sum"></span></div>
+          <div class="af-scroll">
+            <table class="t count-table" id="count-table">
+              <thead><tr><th>Kurstyp</th><th class="num">Kurse</th><th class="num">Termine</th><th class="num">Brutto</th><th>Pros (Kurse)</th><th>Gleichzeitig</th></tr></thead>
+              <tbody id="count-list"></tbody>
+            </table>
+          </div>
+          <p class="note count-note">Kurse = Serien bzw. Einzeltermine (nur 2027). «Gleichzeitig»: Termine, die sich mit einem Termin desselben Kurstyps überschneiden, bzw. mit einem Kurstyp aus «Darf nicht parallel stattfinden zu» (rot = verboten). Klick auf eine Zeile filtert die Liste unten.</p>
+        </div>
+
+        <div class="card stack">
+          <div class="hd"><h3>Alle Kurse</h3><span class="sub" id="event-sum"></span><span class="spacer"></span><button class="btn sm" type="button" id="event-filter-clear" hidden></button></div>
           <table class="t" id="event-table">
             <thead><tr><th>Datum</th><th>Zeit</th><th>Pro</th><th>Typ</th><th class="num">Brutto</th><th class="num">Netto</th><th>Notiz</th></tr></thead>
             <tbody id="event-list"></tbody>
@@ -372,6 +383,7 @@
               <label class="af-date">Bis <input type="date" id="af-to" value="2027-12-31" min="2027-01-01" max="2027-12-31"></label>
               <label class="check sm"><input type="checkbox" id="af-rules" checked> Regeln zuerst erfüllen</label>
               <label class="check sm"><input type="checkbox" id="af-free" checked> Freie Tage der Pros beachten</label>
+              <label class="check sm" title="Nie zwei Kurse desselben Kurstyps zur selben Zeit (z. B. zwei Gruppen «Platzreife Teil 1 A»)"><input type="checkbox" id="af-once" checked> Gleichen Kurstyp nie gleichzeitig</label>
             </div>
             <div class="af-summary" id="af-summary"></div>
           </div>
