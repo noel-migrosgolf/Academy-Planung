@@ -921,13 +921,12 @@ function conflictText(konflikte, max = 3) {
 // geringsten Auslastung im Verhältnis zum Ziel); danach füllen die übrigen Typen (typen) auf, ausser uebrige = false.
 // nachplanen: [{ typ, anzahl }] = nur diese Kurstypen nachträglich verplanen, je die gewünschte Anzahl Serien
 // (bei Einzelterminen Termine); die Ziel-Auslastung gilt als Obergrenze, ausser ziel_ueberschreiten = true.
-// gleicher_typ_gleichzeitig: erlaubt mehrere Kurse desselben Typs zur selben Zeit (Standard: nein).
 // regeln_erfuellen: zuerst die Untergrenzen der aktiven Regeln (mindestens, genau, mehr als) auffüllen,
 // verteilt auf passende Pros mit der geringsten Auslastung im Verhältnis zu ihrem Ziel.
 async function autoFill(
   planId,
   { pros, ziel_prozent, ziele, typen, von, bis, freie_tage_beachten = false, regeln_erfuellen = false,
-    prioritaet, uebrige = true, nachplanen, ziel_ueberschreiten = false, gleicher_typ_gleichzeitig = false } = {},
+    prioritaet, uebrige = true, nachplanen, ziel_ueberschreiten = false } = {},
   { dryRun = false, userId = null } = {}
 ) {
   const checkPercent = (v) => {
@@ -1053,8 +1052,8 @@ async function autoFill(
       if (!catchUp && weeklyDone.has(type.id)) return false;
       if (series.some((ev) => isOff(pro, ev.date) || absenceOn(pro, ev.date) || !free(ev))) return false;
       if (seriesOverlaps(series)) return false; // z. B. Puffer eines Termins reicht in den nächsten
-      // «nicht parallel zu» und, ausser gleicher_typ_gleichzeitig, nie zwei Kurse desselben Typs gleichzeitig
-      const avoid = new Set([...(type.nicht_parallel || []), ...(gleicher_typ_gleichzeitig ? [] : [type.id])]);
+      // «Darf nicht parallel stattfinden zu» (von Hand je Kurstyp eingestellt, auch «Dieser Kurstyp selbst»)
+      const avoid = new Set(type.nicht_parallel || []);
       if (avoid.size) {
         const clash = (ev) => (byDate.get(ev.date) || []).some(([t, s, e]) => avoid.has(t) && ev.start_min < e && ev.end_min > s);
         if (series.some(clash)) return false;
