@@ -32,6 +32,7 @@
         <select id="plan-select" class="fsel" title="Plan wählen" aria-label="Plan"></select>
         <span id="plan-ro" class="badge" hidden title="Dieser Plan ist für dich nur zum Ansehen freigegeben">nur ansehen</span>
         <button class="btn sm" type="button" id="btn-plans">Pläne</button>
+        <button class="btn sm" type="button" data-export title="Aktuellen Plan als Excel, PDF oder JSON herunterladen">Export</button>
       </div>
       <span id="session-info" class="user-chip" hidden>
         <i id="session-avatar"></i><span id="session-name"></span>
@@ -822,6 +823,42 @@
   </dialog>
 
   <!-- Pläne: anlegen, kopieren, umbenennen, löschen, teilen -->
+  <!-- Plan exportieren -->
+  <dialog id="dlg-export" class="dialog">
+    <form id="export-form" class="card" novalidate>
+      <div class="hd"><h3>Plan exportieren</h3></div>
+      <div class="bd form">
+        <div class="field">
+          <span class="field-label">Format</span>
+          <div class="seg" id="export-format" role="tablist" aria-label="Format">
+            <button type="button" data-format="xlsx" class="on">Excel (.xlsx)</button>
+            <button type="button" data-format="pdf">PDF</button>
+            <button type="button" data-format="json">JSON</button>
+          </div>
+          <p class="note" id="export-note"></p>
+        </div>
+        <div class="grid2">
+          <label>Von
+            <input name="von" type="date" value="2027-01-01">
+          </label>
+          <label>Bis
+            <input name="bis" type="date" value="2027-12-31">
+          </label>
+        </div>
+        <label>Pro
+          <select name="pro" class="fsel"></select>
+        </label>
+        <p class="note">Exportiert werden die Kurse des geöffneten Plans im Zeitraum, auf Wunsch nur eines Pros (Einsatzplan).</p>
+        <p class="form-error" role="alert"></p>
+        <div class="actions">
+          <span class="spacer"></span>
+          <button class="btn" type="button" data-close>Abbrechen</button>
+          <button class="btn primary" type="submit">Herunterladen</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="dlg-plans" class="dialog dialog-wide">
     <div class="card">
       <div class="hd"><h3>Pläne</h3><span class="sub">Termine, Regeln, Verlauf und KI-Chats gehören zum Plan; Pros und Kurstypen sind gemeinsam.</span></div>
@@ -852,6 +889,7 @@
   <script src="js/ai.js"></script>
   <script src="js/autofill.js"></script>
   <script src="js/rules.js"></script>
+  <script src="js/export.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

@@ -65,6 +65,11 @@
     toast,
     reload: () => loadData(),
   });
+  ExportUI.init({
+    toast,
+    planId: () => PlansUI.currentId(),
+    pros: () => pros,
+  });
   KiPage.init({
     api,
     toast,

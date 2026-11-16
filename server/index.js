@@ -8,6 +8,7 @@ const eventsData = require("./events");
 const rulesData = require("./rules");
 const history = require("./history");
 const planning = require("./planning");
+const exportData = require("./export");
 const ai = require("./ai");
 const plans = require("./plans");
 const { versioned } = history;
@@ -604,6 +605,32 @@ api.post("/autofill", ...edit,
       throw err;
     }
   });
+
+// --- Plan-Export: Kurse des aktuellen Plans als Excel (.xlsx), PDF oder JSON ---
+// ?format=xlsx|pdf|json, optional von, bis (Standard: 2027) und pro (ID); Plan per Header oder ?plan=ID.
+
+api.get("/plan-export", ...view, async (req, res) => {
+  const format = String(req.query.format || "xlsx");
+  if (!exportData.FORMATS[format]) return res.status(400).json({ error: "Format: bitte xlsx, pdf oder json." });
+  for (const key of ["von", "bis"]) {
+    if (req.query[key] && !isDate(req.query[key])) return res.status(400).json({ error: `«${req.query[key]}» ist kein gültiges Datum.` });
+  }
+  const from = req.query.von || undefined;
+  const to = req.query.bis || undefined;
+  if (from && to && to < from) return res.status(400).json({ error: "Zeitraum: «bis» liegt vor «von»." });
+  try {
+    const data = await exportData.collect(req.plan, { from, to, proId: Number.parseInt(req.query.pro, 10) || null });
+    const body = await exportData.FORMATS[format].render(data);
+    const name = exportData.fileName(data, format);
+    res.set("Content-Type", exportData.FORMATS[format].type);
+    res.set("Content-Disposition", `attachment; filename="${name}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+    res.set("Cache-Control", "no-store");
+    res.send(body);
+  } catch (err) {
+    if (err instanceof eventsData.ValidationError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+});
 
 // --- Export (nur lesend): alle Daten als JSON, ohne Passwörter und Sitzungen ---
 
