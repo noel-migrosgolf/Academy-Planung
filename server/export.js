@@ -60,6 +60,8 @@ async function collect(plan, { from = YEAR_FROM, to = YEAR_TO, proId = null } = 
       pro_kuerzel: pro?.code ?? null,
       kurstyp_id: t?.code ?? null,
       kurstyp: t?.name ?? "?",
+      kurs_nr: ev.kurs_nr,
+      kurs: `${t?.name ?? "?"}${ev.kurs_nr ? ` (${ev.kurs_nr})` : ""}${ev.series_id ? ` – ${ev.series_index}/${seriesSize.get(ev.series_id)}` : ""}`,
       bereich: eventsData.AREAS[t?.einsatzbereich]?.label || "alle",
       serie: ev.series_id ? `${ev.series_index}/${seriesSize.get(ev.series_id)}` : null,
       serie_id: ev.series_id,
@@ -163,9 +165,11 @@ async function toXlsx(data) {
     { header: "Pro", key: "pro", width: 16 },
     { header: "Kürzel", key: "pro_kuerzel", width: 8 },
     { header: "Kurstyp-ID", key: "kurstyp_id", width: 12 },
-    { header: "Kurstyp", key: "kurstyp", width: 34 },
-    { header: "Bereich", key: "bereich", width: 10 },
+    { header: "Kurstyp", key: "kurstyp", width: 30 },
+    { header: "Kurs-Nr.", key: "kurs_nr", width: 9 },
     { header: "Termin", key: "serie", width: 8 },
+    { header: "Kurs", key: "kurs", width: 40 },
+    { header: "Bereich", key: "bereich", width: 10 },
     { header: "Brutto h", key: "brutto_h", width: 10, numFmt: "0.00" },
     { header: "Netto h", key: "netto_h", width: 10, numFmt: "0.00" },
     { header: "Notiz", key: "notiz", width: 40 },
@@ -318,12 +322,12 @@ function toPdf(data) {
         rows.push({ group: `${MONTHS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}` });
       }
       rows.push([formatDate(k.datum), k.wochentag.slice(0, 2), k.kw, `${k.beginn}–${k.unterricht_bis}`, k.pro,
-        k.kurstyp_id ? `${k.kurstyp_id} · ${k.kurstyp}` : k.kurstyp, k.serie, num(k.brutto_h), num(k.netto_h), k.notiz]);
+        k.kurstyp_id ? `${k.kurstyp_id} · ${k.kurs}` : k.kurs, num(k.brutto_h), num(k.netto_h), k.notiz]);
     }
     if (!rows.length) rows.push({ group: "Keine Kurse im gewählten Zeitraum." });
     pdfTable(doc, [
       { label: "Datum", width: 62 }, { label: "Tag", width: 26 }, { label: "KW", width: 26, align: "right" }, { label: "Unterricht", width: 72 },
-      { label: "Pro", width: 80 }, { label: "Kurstyp", width: 220 }, { label: "Termin", width: 42 },
+      { label: "Pro", width: 80 }, { label: "Kurs (Nr.) – Termin", width: 262 },
       { label: "Brutto h", width: 46, align: "right" }, { label: "Netto h", width: 46, align: "right" }, { label: "Notiz", width: 150 },
     ], rows);
 

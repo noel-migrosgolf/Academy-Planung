@@ -10,7 +10,7 @@ const FERIEN_ZUG = require("../public/js/ferien.js").filter((f) => f.type === "f
 
 const TYPE_FIELDS = `id, ${eventsData.TYPE_COLUMNS.join(", ")}`;
 const EVENT_FIELDS =
-  "id, type_id, pro_id, to_char(date, 'YYYY-MM-DD') AS date, start_min, end_min, notiz, series_id, series_index";
+  "id, type_id, pro_id, to_char(date, 'YYYY-MM-DD') AS date, start_min, end_min, notiz, series_id, series_index, kurs_nr";
 
 class PlanningError extends eventsData.ValidationError {}
 
@@ -269,6 +269,9 @@ async function overview(planId, { from, to, pro } = {}, db = pool) {
     planned.set(ev.pro_id, sum);
   }
 
+  const seriesSize = new Map();
+  for (const ev of all) if (ev.series_id) seriesSize.set(ev.series_id, (seriesSize.get(ev.series_id) || 0) + 1);
+
   const inRange = all.filter(
     (ev) => (!from || ev.date >= from) && (!to || ev.date <= to) && (!proFilter || ev.pro_id === proFilter.id)
   );
@@ -324,8 +327,8 @@ async function overview(planId, { from, to, pro } = {}, db = pool) {
         datum: ev.date,
         zeit: `${clock(ev.start_min)}–${clock(ev.end_min)}`,
         pro: proById.get(ev.pro_id)?.name ?? "?",
-        typ: t?.name ?? "?",
-        serie: ev.series_id ? `${ev.series_index}/${eventsData.isWeekly(t) ? "wöchentl." : t?.series_offsets.length ?? "?"}` : null,
+        typ: `${t?.name ?? "?"}${ev.kurs_nr ? ` (${ev.kurs_nr})` : ""}`,
+        serie: ev.series_id ? `${ev.series_index}/${seriesSize.get(ev.series_id)}` : null,
         notiz: ev.notiz || null,
       };
     }),
@@ -487,7 +490,8 @@ async function bulkUpdate(planId, changes, { dryRun = false } = {}) {
       if (plan.konflikte.length) throw new PlanningError(`${label}${conflictText(plan.konflikte)}`);
       const ev = plan.changes[0].after;
       const { rows: done } = await db.query(
-        `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
+        `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6,
+                kurs_nr = CASE WHEN type_id = $1 THEN kurs_nr END
           WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
         [ev.type_id, ev.pro_id, ev.date, ev.start_min, ev.end_min, ev.notiz, id]
       );
@@ -1300,10 +1304,10 @@ async function undoChange(planId, undo) {
       await assertFree(db, planId, row, row.id, label);
       try {
         await db.query(
-          `INSERT INTO events (id, plan_id, type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by, created_at)
-           VALUES ($1, $12, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT id FROM users WHERE id = $10), coalesce($11, now()))`,
+          `INSERT INTO events (id, plan_id, type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by, created_at, kurs_nr)
+           VALUES ($1, $12, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT id FROM users WHERE id = $10), coalesce($11, now()), $13)`,
           [row.id, row.type_id, row.pro_id, row.date, row.start_min, row.end_min, row.notiz, row.series_id, row.series_index,
-            row.created_by ?? null, row.created_at ?? null, planId]
+            row.created_by ?? null, row.created_at ?? null, planId, row.kurs_nr ?? null]
         );
       } catch (err) {
         if (err.code === "23503") throw new PlanningError(`${label}Pro oder Kurstyp gibt es nicht mehr.`);
@@ -1322,7 +1326,7 @@ async function undoChange(planId, undo) {
       await assertFree(db, planId, row, row.id, label);
       try {
         await db.query(
-          "UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6 WHERE id = $7",
+          "UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6, kurs_nr = CASE WHEN type_id = $1 THEN kurs_nr END WHERE id = $7",
           [row.type_id, row.pro_id, row.date, row.start_min, row.end_min, row.notiz, row.id]
         );
       } catch (err) {
@@ -1340,11 +1344,13 @@ async function describeEvents(list) {
   if (!list?.length) return "Kurs";
   const first = list[0];
   const { rows } = await pool.query(
-    "SELECT (SELECT name FROM event_types WHERE id = $1) AS type, (SELECT name FROM pros WHERE id = $2) AS pro",
-    [first.type_id, first.pro_id]
+    `SELECT (SELECT name FROM event_types WHERE id = $1) AS type, (SELECT name FROM pros WHERE id = $2) AS pro,
+            coalesce($3::int, (SELECT kurs_nr FROM events WHERE id = $4)) AS nr`,
+    [first.type_id, first.pro_id, first.kurs_nr ?? null, first.id ?? 0]
   );
   const count = list.length > 1 ? ` (${list.length} Termine)` : "";
-  return `${rows[0].type ?? "Kurs"} · ${formatDate(first.date)} · ${rows[0].pro ?? "?"}${count}`;
+  const nr = rows[0].nr ? ` (${rows[0].nr})` : "";
+  return `${rows[0].type ?? "Kurs"}${nr} · ${formatDate(first.date)} · ${rows[0].pro ?? "?"}${count}`;
 }
 
 module.exports = {

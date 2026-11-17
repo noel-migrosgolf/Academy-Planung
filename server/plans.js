@@ -86,9 +86,9 @@ router.post("/", async (req, res) => {
     if (Number.isInteger(copyFrom)) {
       // Serien bekommen im neuen Plan eigene Serien-IDs
       await db.query(
-        `INSERT INTO events (plan_id, type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by)
+        `INSERT INTO events (plan_id, type_id, pro_id, date, start_min, end_min, notiz, series_id, series_index, created_by, kurs_nr)
          SELECT $1, type_id, pro_id, date, start_min, end_min, notiz,
-                CASE WHEN series_id IS NULL THEN NULL ELSE md5(series_id || '-' || $1::int::text) END, series_index, $3
+                CASE WHEN series_id IS NULL THEN NULL ELSE md5(series_id || '-' || $1::int::text) END, series_index, $3, kurs_nr
            FROM events WHERE plan_id = $2`,
         [planId, copyFrom, req.session.id ?? null]
       );

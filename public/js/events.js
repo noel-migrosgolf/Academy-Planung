@@ -97,11 +97,15 @@
     return data.events.filter((x) => x.series_id === ev.series_id).sort((a, b) => a.series_index - b.series_index);
   }
 
-  // "Platzreife Teil 1 A · 2/4"
-  function eventName(ev) {
+  // Kursname mit Kursnummer, z. B. "Platzreife Teil 3 A (1)"
+  function courseName(ev) {
     const name = typeOf(ev)?.name || "Kurs";
-    const t = typeOf(ev);
-    return ev.series_id && t ? `${name} · ${ev.series_index}/${isWeekly(t) ? seriesOf(ev).length : t.series_offsets.length}` : name;
+    return ev.kurs_nr ? `${name} (${ev.kurs_nr})` : name;
+  }
+
+  // "Platzreife Teil 3 A (1) – 2/3": Kursnummer und Termin der Serie
+  function eventName(ev) {
+    return ev.series_id ? `${courseName(ev)} – ${ev.series_index}/${seriesOf(ev).length}` : courseName(ev);
   }
 
   // Geplante Stunden je Pro (Minuten brutto/netto) aus allen geladenen Kursen
@@ -396,8 +400,8 @@
     const series = !!event?.series_id;
     const t = event ? typeOf(event) : null;
     $("#event-title").textContent = series
-      ? `${t?.name || "Serie"} · Termin ${event.series_index} von ${seriesOf(event).length}`
-      : event ? "Kurs bearbeiten" : "Neuer Kurs";
+      ? `${courseName(event)} · Termin ${event.series_index} von ${seriesOf(event).length}`
+      : event ? `${courseName(event)} bearbeiten` : "Neuer Kurs";
     $("#event-delete").hidden = !event;
     $("#event-delete").textContent = series ? "Serie löschen" : "Löschen";
     $("#event-series-note").hidden = !series;
@@ -444,8 +448,8 @@
     const { undo_token: token } = await ctx.api(`/events/${ev.id}${ev.series_id ? "?serie=1" : ""}`, { method: "DELETE" });
     const t = typeOf(ev);
     const label = ev.series_id
-      ? `${t?.name || "Serie"} (${series.length} Termine) gelöscht`
-      : `${t?.name || "Kurs"} ${clock(ev.start_min)}–${clock(ev.end_min)} gelöscht`;
+      ? `${courseName(ev)} gelöscht (${series.length} Termine)`
+      : `${courseName(ev)} ${clock(ev.start_min)}–${clock(ev.end_min)} gelöscht`;
     // Rückgängig stellt die gelöschten Termine unverändert wieder her (inkl. Notiz je Termin)
     ctx.toast(label, token && {
       label: "Rückgängig",
@@ -937,7 +941,7 @@
   }
 
   window.Events = {
-    init, setData, render, openEvent, eventMenu, eventName, minutesOf, lessonEnd,
+    init, setData, render, openEvent, eventMenu, eventName, courseName, minutesOf, lessonEnd,
     plannedByPro, percentOfSoll, formatPercent, formatHM, formatShortHours, clock, typeOf,
   };
 })();

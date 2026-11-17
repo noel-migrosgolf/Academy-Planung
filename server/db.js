@@ -214,6 +214,44 @@ async function migrate() {
   }
   await pool.query("ALTER TABLE events ALTER COLUMN plan_id SET NOT NULL; ALTER TABLE rules ALTER COLUMN plan_id SET NOT NULL;");
 
+  // Kursnummer: jeder Kurs (Serie bzw. Einzeltermin) hat je Plan und Kurstyp eine feste Nummer, z. B.
+  // «Platzreife Teil 3 A (1) – 2/3». Alle Termine einer Serie tragen dieselbe Nummer. Neue Kurse bekommen
+  // die nächste freie Nummer (nach dem ersten Termin geordnet); Nummern gelöschter Kurse werden nicht neu
+  // vergeben. Wechselt ein Einzeltermin den Kurstyp, wird er dort neu nummeriert (kurs_nr = NULL).
+  await pool.query(`
+    ALTER TABLE events ADD COLUMN IF NOT EXISTS kurs_nr INTEGER;
+    CREATE OR REPLACE FUNCTION assign_kurs_nr() RETURNS void LANGUAGE sql AS $$
+      -- Weitere Termine einer Serie (einzeln eingefügt) übernehmen die Nummer der Serie
+      UPDATE events e SET kurs_nr = s.nr
+        FROM (SELECT plan_id, series_id, max(kurs_nr) AS nr FROM events
+               WHERE series_id IS NOT NULL AND kurs_nr IS NOT NULL GROUP BY 1, 2) s
+       WHERE e.kurs_nr IS NULL AND e.series_id = s.series_id AND e.plan_id = s.plan_id;
+      WITH missing AS (
+        SELECT plan_id, type_id, coalesce(series_id, 'e' || id) AS kurs, min(date) AS d, min(start_min) AS s, min(id) AS i
+          FROM events WHERE kurs_nr IS NULL GROUP BY 1, 2, 3
+      ), used AS (
+        SELECT e.plan_id, e.type_id, max(e.kurs_nr) AS mx
+          FROM events e JOIN (SELECT DISTINCT plan_id, type_id FROM missing) m USING (plan_id, type_id)
+         GROUP BY 1, 2
+      ), numbered AS (
+        SELECT m.*, coalesce(u.mx, 0) + row_number() OVER (PARTITION BY m.plan_id, m.type_id ORDER BY m.d, m.s, m.i) AS nr
+          FROM missing m LEFT JOIN used u USING (plan_id, type_id)
+      )
+      UPDATE events e SET kurs_nr = n.nr
+        FROM numbered n
+       WHERE e.kurs_nr IS NULL AND e.plan_id = n.plan_id AND e.type_id = n.type_id AND coalesce(e.series_id, 'e' || e.id) = n.kurs;
+    $$;
+    CREATE OR REPLACE FUNCTION events_assign_kurs_nr() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      PERFORM assign_kurs_nr();
+      RETURN NULL;
+    END $$;
+    DROP TRIGGER IF EXISTS events_kurs_nr ON events;
+    CREATE TRIGGER events_kurs_nr AFTER INSERT OR UPDATE OF type_id ON events
+      FOR EACH STATEMENT EXECUTE FUNCTION events_assign_kurs_nr();
+    SELECT assign_kurs_nr();
+  `);
+
   // Kurse mit fester Zeit an ihren Typ angleichen (Puffer am Ende bei pauschalen Typen).
   await pool.query(events.SYNC_FIXED_EVENTS_SQL, [null]);
 

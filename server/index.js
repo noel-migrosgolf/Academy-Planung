@@ -349,7 +349,12 @@ api.post("/events", ...edit, versioned(async (req, b) => `Geplant: ${await descr
       );
       created.push(rows[0]);
     }
-    res.status(201).json({ events: created });
+    // Erst nach dem Einfügen vergibt die Datenbank die Kursnummer (Trigger), deshalb neu lesen
+    const { rows: numbered } = await db.query(
+      `SELECT ${EVENT_FIELDS} FROM events WHERE id = ANY($1::int[]) ORDER BY series_index NULLS FIRST, id`,
+      [created.map((e) => e.id)]
+    );
+    res.status(201).json({ events: numbered });
   })
 );
 
@@ -391,7 +396,8 @@ api.put("/events/:id", ...edit, versioned(async (req, b) => (b.dry_run ? null : 
     const updated = [];
     for (const { after: a } of plan.changes) {
       const { rows: done } = await db.query(
-        `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6
+        `UPDATE events SET type_id = $1, pro_id = $2, date = $3, start_min = $4, end_min = $5, notiz = $6,
+                kurs_nr = CASE WHEN type_id = $1 THEN kurs_nr END
           WHERE id = $7 RETURNING ${EVENT_FIELDS}`,
         [a.type_id, a.pro_id, a.date, a.start_min, a.end_min, a.notiz, a.id]
       );

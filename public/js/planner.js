@@ -397,7 +397,7 @@
           createMenu(e, pro, day, suggestSlot(day, pro.id), [
             ...(evs.length ? ["-"] : []),
             ...evs.map((ev) => ({
-              label: `Bearbeiten: ${E.clock(ev.start_min)} ${E.typeOf(ev)?.name || "Kurs"}`,
+              label: `Bearbeiten: ${E.clock(ev.start_min)} ${E.eventName(ev)}`,
               action: () => E.openEvent(ev),
             })),
             "-",
